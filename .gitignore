@@ -7,10 +7,31 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
+
+# Local files
 *.local
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Firebase
+android/app/google-services.json
+
+# Android build files
+android/.gradle
+android/build
+android/app/build
+
+# Capacitor generated
+android/capacitor-cordova-android-plugins/build
 
 # Editor directories and files
 .vscode/*
@@ -22,8 +43,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Environment variables
-.env
-.env.*
-!.env.example

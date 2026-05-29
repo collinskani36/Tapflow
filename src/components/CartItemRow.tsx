@@ -1,8 +1,8 @@
 import { Minus, Plus, Trash2 } from 'lucide-react';
-import { CartItem as CartItemType } from '@/types';
+import { CartItem as CartItemType } from '@/context/CartContext'; // ← import from context, not @/types
 import { useCart } from '@/context/CartContext';
 
-const CartItemRow = ({ product, quantity }: CartItemType) => {
+const CartItemRow = ({ product, quantity, variantSize }: CartItemType) => { // ← destructure variantSize
   const { updateQuantity, removeItem } = useCart();
 
   return (
@@ -22,19 +22,22 @@ const CartItemRow = ({ product, quantity }: CartItemType) => {
       </div>
       <div className="flex items-center gap-2">
         <button
-          onClick={() => updateQuantity(product.id, quantity - 1)}
+          onClick={() => updateQuantity(product.id, quantity - 1, variantSize)} // ← pass variantSize
           className="p-1 rounded-full border border-border hover:border-primary transition-colors"
         >
           <Minus className="w-4 h-4" />
         </button>
         <span className="w-6 text-center font-medium">{quantity}</span>
         <button
-          onClick={() => updateQuantity(product.id, quantity + 1)}
+          onClick={() => updateQuantity(product.id, quantity + 1, variantSize)} // ← pass variantSize
           className="p-1 rounded-full border border-border hover:border-primary transition-colors"
         >
           <Plus className="w-4 h-4" />
         </button>
-        <button onClick={() => removeItem(product.id)} className="p-1 text-destructive hover:opacity-80 ml-1">
+        <button
+          onClick={() => removeItem(product.id, variantSize)} // ← pass variantSize
+          className="p-1 text-destructive hover:opacity-80 ml-1"
+        >
           <Trash2 className="w-4 h-4" />
         </button>
       </div>

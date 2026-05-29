@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">My Liquorstore</string>
+    <string name="title_activity_main">My Liquorstore</string>
+    <string name="package_name">com.myliqour.com</string>
+    <string name="custom_url_scheme">com.myliqour.com</string>
+</resources>
