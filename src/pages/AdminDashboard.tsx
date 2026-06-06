@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, MapPin, LogOut, ClipboardList, UserCheck } from 'lucide-react';
+import { Package, MapPin, LogOut, ClipboardList, UserCheck, Store, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import AdminOrders from '@/components/admin/AdminOrders';
 import AdminProducts from '@/components/admin/AdminProducts';
@@ -83,20 +83,34 @@ const AdminDashboard = () => {
       {/* HEADER */}
       <header className="glass-card border-b border-border sticky top-0 z-40">
         <div className="container flex items-center justify-between h-14">
-          <h1 className="font-display text-lg text-foreground">
-            Admin Dashboard
-          </h1>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Store className="w-4 h-4" />
+              Shop Overview
+            </button>
+            
+            <div className="w-px h-5 bg-border" />
+            
+            <h1 className="font-display text-lg text-foreground">
+              Admin Dashboard
+            </h1>
+          </div>
 
-          <button
-            onClick={() => {
-              logout();
-              navigate('/');
-            }}
-            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-destructive"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                logout();
+                navigate('/');
+              }}
+              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-destructive"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
