@@ -350,7 +350,7 @@ const ShopPage = () => {
           >
             <Sparkles className="w-3 h-3 gold-text" />
             <span className="text-xs tracking-widest uppercase text-muted-foreground font-medium">
-              Kimumu · Eldoret
+              Action · Eldoret
             </span>
             <Sparkles className="w-3 h-3 gold-text" />
           </motion.div>
