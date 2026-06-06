@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
-import { Wine, Search, X, Plus, Minus, ShoppingCart, ChevronRight } from 'lucide-react';
+import { Wine, Search, X, Plus, Minus, ShoppingCart, ChevronRight, Sparkles } from 'lucide-react';
 import Header from '@/components/Header';
 import StickyCartButton from '@/components/StickyCartButton';
 import { Product } from '@/types';
 import { fetchProducts } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useCart } from '@/context/CartContext'; // ← updated import path
+import { useCart } from '@/context/CartContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,6 +20,27 @@ function getVariants(product: Product): Variant[] {
     : [{ size: '750ml', price: product.price }];
 }
 
+// ─── Category Config ──────────────────────────────────────────────────────────
+
+type CategoryKey = 'all' | 'whisky' | 'vodka' | 'spirit' | 'beer' | 'wine';
+
+const CATEGORIES: { key: CategoryKey; label: string; emoji: string; match: string[] }[] = [
+  { key: 'all',    label: 'All',    emoji: '✦',  match: [] },
+  { key: 'whisky', label: 'Whisky', emoji: '🥃', match: ['whisky', 'whiskey', 'scotch', 'bourbon'] },
+  { key: 'vodka',  label: 'Vodka',  emoji: '🍸', match: ['vodka'] },
+  { key: 'spirit', label: 'Spirits', emoji: '🍶', match: ['spirit', 'gin', 'rum', 'tequila', 'brandy', 'cognac'] },
+  { key: 'beer',   label: 'Beer',   emoji: '🍺', match: ['beer', 'lager', 'ale', 'stout'] },
+  { key: 'wine',   label: 'Wine',   emoji: '🍷', match: ['wine', 'champagne', 'prosecco', 'rosé', 'rose'] },
+];
+
+function matchesCategory(product: Product, key: CategoryKey): boolean {
+  if (key === 'all') return true;
+  const cat = (product.category ?? '').toLowerCase();
+  const name = (product.name ?? '').toLowerCase();
+  const targets = CATEGORIES.find((c) => c.key === key)?.match ?? [];
+  return targets.some((t) => cat.includes(t) || name.includes(t));
+}
+
 // ─── Product Modal ────────────────────────────────────────────────────────────
 
 const ProductModal = ({
@@ -32,14 +53,11 @@ const ProductModal = ({
   const variants = getVariants(product);
   const [selectedVariant, setSelectedVariant] = useState<Variant>(variants[0]);
   const [qty, setQty] = useState(1);
-  const { addItem } = useCart(); // ← uses addItem, not addToCart
+  const { addItem } = useCart();
 
-  // Lock body scroll
   useEffect(() => {
     document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = '';
-    };
+    return () => { document.body.style.overflow = ''; };
   }, []);
 
   const handleAdd = () => {
@@ -62,7 +80,7 @@ const ProductModal = ({
         className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
       />
 
-      {/* Sheet — slides up from bottom on mobile, centered on desktop */}
+      {/* Sheet */}
       <motion.div
         initial={{ y: '100%', opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -71,7 +89,7 @@ const ProductModal = ({
         className="fixed bottom-0 left-0 right-0 md:inset-0 md:m-auto z-50 md:max-w-md md:max-h-[90vh] md:rounded-2xl rounded-t-2xl bg-background overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Close pill */}
+        {/* Header bar */}
         <div className="sticky top-0 z-10 bg-background pt-3 pb-2 px-4 flex items-center justify-between border-b border-border/30">
           <div className="w-10 h-1 rounded-full bg-border mx-auto absolute left-1/2 -translate-x-1/2 top-3 md:hidden" />
           <span className="text-xs text-muted-foreground uppercase tracking-widest font-medium mt-2 md:mt-0">
@@ -89,11 +107,21 @@ const ProductModal = ({
           {/* Product image */}
           <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden bg-secondary">
             {product.image_url ? (
-              <img
-                src={product.image_url}
-                alt={product.name}
-                className="w-full h-full object-contain p-4"
-              />
+              <>
+                <img
+                  src={product.image_url}
+                  alt={product.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-contain p-4"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
+                  }}
+                />
+                <div className="w-full h-full items-center justify-center absolute inset-0" style={{ display: 'none' }}>
+                  <Wine className="w-16 h-16 text-muted-foreground/30" />
+                </div>
+              </>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <Wine className="w-16 h-16 text-muted-foreground/30" />
@@ -211,29 +239,32 @@ const ProductCard = ({
       }`}
     >
       {/* Image */}
-      <div className="relative aspect-square bg-secondary overflow-hidden">
+      <div className="relative aspect-square bg-secondary/50 overflow-hidden">
         {product.image_url ? (
-          <img
-            src={product.image_url}
-            alt={product.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-          />
+          <>
+            <img
+              src={product.image_url}
+              alt={product.name}
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-contain p-3 transition-transform duration-300 group-hover:scale-105"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
+              }}
+            />
+            <div className="w-full h-full items-center justify-center absolute inset-0" style={{ display: 'none' }}>
+              <Wine className="w-10 h-10 text-muted-foreground/20" />
+            </div>
+          </>
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <Wine className="w-10 h-10 text-muted-foreground/30" />
+            <Wine className="w-10 h-10 text-muted-foreground/20" />
           </div>
         )}
         {!product.is_available && (
-          <div className="absolute top-2 left-2">
-            <span className="text-[10px] bg-destructive/80 text-white px-2 py-0.5 rounded-full font-medium uppercase tracking-wide">
-              Out
-            </span>
-          </div>
-        )}
-        {hasMultiple && (
-          <div className="absolute top-2 right-2">
-            <span className="text-[10px] bg-black/60 text-white px-2 py-0.5 rounded-full font-medium">
-              {variants.length} sizes
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+            <span className="text-white text-[10px] font-medium uppercase tracking-widest bg-black/50 px-2.5 py-1 rounded-full">
+              Sold Out
             </span>
           </div>
         )}
@@ -242,6 +273,7 @@ const ProductCard = ({
       {/* Info */}
       <div className="p-3">
         <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium mb-0.5">
+          {CATEGORIES.find((c) => c.key !== 'all' && c.match.some((m) => (product.category ?? '').toLowerCase().includes(m)))?.emoji ?? ''}{' '}
           {product.category}
         </p>
         <h3 className="font-display text-sm text-foreground leading-snug line-clamp-2 mb-2">
@@ -272,7 +304,7 @@ const ProductCard = ({
 const ShopPage = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>('all');
+  const [filter, setFilter] = useState<CategoryKey>('all');
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -289,10 +321,8 @@ const ShopPage = () => {
     if (showSearch) searchRef.current?.focus();
   }, [showSearch]);
 
-  const categories = ['all', 'spirit', 'beer', 'wine'];
-
   const filtered = products.filter((p) => {
-    const matchCat = filter === 'all' || p.category === filter;
+    const matchCat = matchesCategory(p, filter);
     const matchSearch =
       !search || p.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
@@ -303,20 +333,64 @@ const ShopPage = () => {
       <Header />
 
       <main className="container pb-28 md:pb-12">
-        {/* Hero */}
-        <section className="py-10 text-center space-y-3">
-          <div className="mx-auto w-14 h-14 rounded-full gold-gradient flex items-center justify-center mb-3">
-            <Wine className="w-7 h-7 text-primary-foreground" />
+
+        {/* ── Premium Hero ─────────────────────────────────────────────────── */}
+        <section className="relative py-12 md:py-16 text-center overflow-hidden">
+          {/* Subtle ambient glow */}
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-40 rounded-full bg-primary/5 blur-3xl" />
           </div>
-          <h1 className="font-display text-4xl md:text-5xl text-foreground leading-tight">
-            Tap_Flow <span className="gold-text">Wines & Spirits</span>
-          </h1>
-          <p className="text-muted-foreground max-w-xs mx-auto text-sm">
-            Premium liquor delivered fast within Kimumu, Eldoret — right to your doorstep.
-          </p>
+
+          {/* Top label */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-primary/20 bg-primary/5 mb-5"
+          >
+            <Sparkles className="w-3 h-3 gold-text" />
+            <span className="text-xs tracking-widest uppercase text-muted-foreground font-medium">
+              Kimumu · Eldoret
+            </span>
+            <Sparkles className="w-3 h-3 gold-text" />
+          </motion.div>
+
+          {/* Main heading */}
+          <motion.h1
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+            className="font-display text-4xl md:text-6xl text-foreground leading-tight tracking-tight mb-3"
+          >
+            Cheers
+            <br />
+            <span className="gold-text">Wines & Spirits</span>
+          </motion.h1>
+
+          {/* Divider ornament */}
+          <motion.div
+            initial={{ opacity: 0, scaleX: 0 }}
+            animate={{ opacity: 1, scaleX: 1 }}
+            transition={{ duration: 0.5, delay: 0.25 }}
+            className="flex items-center justify-center gap-3 my-4"
+          >
+            <div className="h-px w-12 bg-gradient-to-r from-transparent to-primary/40" />
+            <Wine className="w-4 h-4 gold-text" />
+            <div className="h-px w-12 bg-gradient-to-l from-transparent to-primary/40" />
+          </motion.div>
+
+          {/* Tagline */}
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="text-muted-foreground max-w-xs mx-auto text-sm leading-relaxed"
+          >
+            Premium liquor — curated, cold & delivered fast right to your doorstep.
+          </motion.p>
         </section>
 
-        {/* Search + Filter bar */}
+        {/* ── Search + Filter ───────────────────────────────────────────────── */}
         <div className="mb-8 space-y-3">
           {/* Search row */}
           <AnimatePresence mode="wait">
@@ -337,10 +411,7 @@ const ShopPage = () => {
                   className="w-full pl-9 pr-10 py-2.5 rounded-xl bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                 />
                 <button
-                  onClick={() => {
-                    setShowSearch(false);
-                    setSearch('');
-                  }}
+                  onClick={() => { setShowSearch(false); setSearch(''); }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground"
                 >
                   <X className="w-4 h-4" />
@@ -366,30 +437,31 @@ const ShopPage = () => {
 
           {/* Category pills */}
           <div className="flex gap-2 flex-wrap">
-            {categories.map((cat) => (
+            {CATEGORIES.map((cat) => (
               <button
-                key={cat}
-                onClick={() => setFilter(cat)}
-                className={`px-4 py-1.5 rounded-full text-sm capitalize transition-all ${
-                  filter === cat
+                key={cat.key}
+                onClick={() => setFilter(cat.key)}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-all ${
+                  filter === cat.key
                     ? 'gold-gradient text-primary-foreground font-medium shadow-sm'
                     : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
                 }`}
               >
-                {cat === 'all' ? 'All' : cat}
+                <span>{cat.emoji}</span>
+                {cat.label}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Results count */}
+        {/* ── Results count ─────────────────────────────────────────────────── */}
         {!loading && search && (
           <p className="text-sm text-muted-foreground mb-4">
             {filtered.length} result{filtered.length !== 1 ? 's' : ''} for &ldquo;{search}&rdquo;
           </p>
         )}
 
-        {/* Products Grid */}
+        {/* ── Products Grid ─────────────────────────────────────────────────── */}
         {loading ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {[...Array(6)].map((_, i) => (
@@ -407,7 +479,7 @@ const ShopPage = () => {
           <div className="text-center py-20 space-y-3">
             <Wine className="w-12 h-12 mx-auto text-muted-foreground/30" />
             <p className="text-muted-foreground">
-              {search ? `No results for "${search}"` : 'No products available yet.'}
+              {search ? `No results for "${search}"` : 'Nothing here yet.'}
             </p>
             {search ? (
               <button
@@ -421,10 +493,7 @@ const ShopPage = () => {
             )}
           </div>
         ) : (
-          <motion.div
-            layout
-            className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
-          >
+          <motion.div layout className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {filtered.map((product) => (
               <motion.div key={product.id} layout>
                 <ProductCard

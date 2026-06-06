@@ -28,7 +28,7 @@ const Header = () => {
         <div className="container flex items-center justify-between h-16">
           <button onClick={handleLogoTap} className="flex items-center gap-2 select-none">
             <Wine className="w-6 h-6 text-primary" />
-            <span className="font-display text-lg text-foreground hidden sm:inline">Tap_Flow</span>
+            <span className="font-display text-lg text-foreground hidden sm:inline">Cheers Lounge</span>
           </button>
 
           <nav className="flex items-center gap-4">
