@@ -3,8 +3,6 @@ import { PushNotifications } from "@capacitor/push-notifications";
 import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase";
 
-// Save or update this device's FCM token in Supabase
-// Uses upsert so reinstalling the app doesn't create duplicates
 async function saveFcmToken(token: string) {
   const { error } = await supabase
     .from("fcm_tokens")
@@ -22,22 +20,17 @@ export function usePushNotifications() {
     if (!Capacitor.isNativePlatform()) return;
 
     const setup = async () => {
-      // ── Create notification channel ──────────────────────────────
-      // importance: 5 = IMPORTANCE_HIGH
-      // This is what makes the notification pop on screen WITH sound
-      // even when the phone is in use — called a "heads-up notification"
       await PushNotifications.createChannel({
         id: "default_channel",
         name: "Order Notifications",
         description: "New order alerts for Cheers Lounge admin",
-        importance: 5,        // 5 = HIGH → heads-up popup + sound
-        visibility: 1,        // 1 = PUBLIC → visible on lock screen
+        importance: 5,
+        visibility: 1,
         sound: "default",
         vibration: true,
         lights: true,
       });
 
-      // ── Request permission ───────────────────────────────────────
       let permStatus = await PushNotifications.checkPermissions();
       if (permStatus.receive === "prompt") {
         permStatus = await PushNotifications.requestPermissions();
@@ -47,15 +40,12 @@ export function usePushNotifications() {
         return;
       }
 
-      // ── Register with FCM ────────────────────────────────────────
       await PushNotifications.register();
     };
 
     setup().catch(console.error);
 
-    // ── Token received → save to Supabase ───────────────────────────
-    // Every admin device that opens the app gets registered here
-    // The Edge Function will send to ALL tokens in this table
+    // Token received → save to Supabase
     const regListener = PushNotifications.addListener(
       "registration",
       (token) => {
@@ -64,30 +54,28 @@ export function usePushNotifications() {
       }
     );
 
-    // ── Registration failed ──────────────────────────────────────────
+    // Registration failed
     const regErrListener = PushNotifications.addListener(
       "registrationError",
       (err) => console.error("❌ FCM registration error:", err.error)
     );
 
-    // ── Foreground notification ──────────────────────────────────────
-    // When app is open, Android suppresses the system tray popup.
-    // We catch it here and re-post it as a local notification
-    // so the admin still gets the sound + heads-up banner.
+    // Foreground notification — app is open
+    // Android suppresses the system tray popup when app is open,
+    // so we re-post it as a local scheduled notification
+    // so the admin still gets the heads-up banner + sound
     const foregroundListener = PushNotifications.addListener(
       "pushNotificationReceived",
       async (notification) => {
         console.log("📬 Foreground push received:", notification.title);
 
-        // Deliver it as a local notification so it shows
-        // as a heads-up banner with sound even while app is open
         await PushNotifications.schedule({
           notifications: [
             {
-              id: Date.now(),                           // unique id
-              title: notification.title ?? "New Order",
+              id: Date.now(),
+              title: notification.title ?? "🛒 New Order!",
               body: notification.body ?? "A new order just came in!",
-              channelId: "default_channel",             // must match above
+              channelId: "default_channel",
               sound: "default",
               actionTypeId: "",
               extra: notification.data ?? {},
@@ -97,12 +85,13 @@ export function usePushNotifications() {
       }
     );
 
-    // ── Admin taps notification → go to /admin ───────────────────────
+    // Admin taps notification in system tray → navigate to admin orders
+    // Uses replace() so the back button doesn't get stuck
     const tapListener = PushNotifications.addListener(
       "pushNotificationActionPerformed",
       (action) => {
-        console.log("👆 Notification tapped");
-        window.location.href = "/admin";
+        console.log("👆 Notification tapped:", action.notification.title);
+        window.location.replace("/admin");
       }
     );
 
