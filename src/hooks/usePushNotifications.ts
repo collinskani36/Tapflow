@@ -1,87 +1,111 @@
 import { useEffect } from "react";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { Capacitor } from "@capacitor/core";
+import { supabase } from "@/lib/supabase";
+
+// Save or update this device's FCM token in Supabase
+// Uses upsert so reinstalling the app doesn't create duplicates
+async function saveFcmToken(token: string) {
+  const { error } = await supabase
+    .from("fcm_tokens")
+    .upsert({ token, updated_at: new Date().toISOString() }, { onConflict: "token" });
+
+  if (error) {
+    console.error("❌ Failed to save FCM token:", error.message);
+  } else {
+    console.log("✅ FCM token saved to Supabase");
+  }
+}
 
 export function usePushNotifications() {
   useEffect(() => {
-    // Only run on a real Android/iOS device
-    // In browser (Vercel preview) this does nothing safely
     if (!Capacitor.isNativePlatform()) return;
 
     const setup = async () => {
-      // ── STEP 1: Check / request permission ──────────────────
-      let permStatus = await PushNotifications.checkPermissions();
+      // ── Create notification channel ──────────────────────────────
+      // importance: 5 = IMPORTANCE_HIGH
+      // This is what makes the notification pop on screen WITH sound
+      // even when the phone is in use — called a "heads-up notification"
+      await PushNotifications.createChannel({
+        id: "default_channel",
+        name: "Order Notifications",
+        description: "New order alerts for Cheers Lounge admin",
+        importance: 5,        // 5 = HIGH → heads-up popup + sound
+        visibility: 1,        // 1 = PUBLIC → visible on lock screen
+        sound: "default",
+        vibration: true,
+        lights: true,
+      });
 
+      // ── Request permission ───────────────────────────────────────
+      let permStatus = await PushNotifications.checkPermissions();
       if (permStatus.receive === "prompt") {
-        // Not yet asked — ask the user now
         permStatus = await PushNotifications.requestPermissions();
       }
-
       if (permStatus.receive !== "granted") {
-        // User denied — exit silently, don't crash
-        console.warn("Push notification permission denied");
+        console.warn("❌ Push notification permission denied");
         return;
       }
 
-      // ── STEP 2: Register device with Firebase FCM ────────────
+      // ── Register with FCM ────────────────────────────────────────
       await PushNotifications.register();
     };
 
-    setup();
+    setup().catch(console.error);
 
-    // ── STEP 3: Device registered successfully → we get FCM token
+    // ── Token received → save to Supabase ───────────────────────────
+    // Every admin device that opens the app gets registered here
+    // The Edge Function will send to ALL tokens in this table
     const regListener = PushNotifications.addListener(
       "registration",
       (token) => {
-        // This is your device's unique FCM token
-        // Right now we log it — in Step 5b we'll save it to Supabase
         console.log("✅ FCM Token:", token.value);
-
-        // TODO (Step 5b): save this token to your Supabase `fcm_tokens` table
-        // saveFcmToken(token.value);
+        saveFcmToken(token.value);
       }
     );
 
-    // ── STEP 4: Registration failed
+    // ── Registration failed ──────────────────────────────────────────
     const regErrListener = PushNotifications.addListener(
       "registrationError",
-      (err) => {
-        console.error("FCM registration error:", err.error);
-      }
+      (err) => console.error("❌ FCM registration error:", err.error)
     );
 
-    // ── STEP 5: App is OPEN and a notification arrives (foreground)
-    // Firebase won't show a system tray notification while app is open
-    // So we handle it ourselves — show a toast or badge
+    // ── Foreground notification ──────────────────────────────────────
+    // When app is open, Android suppresses the system tray popup.
+    // We catch it here and re-post it as a local notification
+    // so the admin still gets the sound + heads-up banner.
     const foregroundListener = PushNotifications.addListener(
       "pushNotificationReceived",
-      (notification) => {
-        console.log("📬 Foreground notification:", notification);
+      async (notification) => {
+        console.log("📬 Foreground push received:", notification.title);
 
-        // Your Supabase realtime already handles the orders update
-        // This is just in case you want a toast on top of that
-        // You can call your toast here:
-        // toast({ title: notification.title, description: notification.body });
+        // Deliver it as a local notification so it shows
+        // as a heads-up banner with sound even while app is open
+        await PushNotifications.schedule({
+          notifications: [
+            {
+              id: Date.now(),                           // unique id
+              title: notification.title ?? "New Order",
+              body: notification.body ?? "A new order just came in!",
+              channelId: "default_channel",             // must match above
+              sound: "default",
+              actionTypeId: "",
+              extra: notification.data ?? {},
+            },
+          ],
+        });
       }
     );
 
-    // ── STEP 6: User TAPS a notification in the system tray
+    // ── Admin taps notification → go to /admin ───────────────────────
     const tapListener = PushNotifications.addListener(
       "pushNotificationActionPerformed",
       (action) => {
-        console.log("👆 Notification tapped:", action.notification);
-
-        // Navigate admin to the orders tab when they tap a new order notification
-        // We use window.location because we're outside React Router here
-        const data = action.notification.data;
-
-        if (data?.type === "new_order") {
-          window.location.href = "/admin";
-        }
+        console.log("👆 Notification tapped");
+        window.location.href = "/admin";
       }
     );
 
-    // ── CLEANUP: Remove all listeners when component unmounts ──
     return () => {
       regListener.then((l) => l.remove());
       regErrListener.then((l) => l.remove());
