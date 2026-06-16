@@ -15,6 +15,15 @@ async function saveFcmToken(token: string) {
   }
 }
 
+// Navigate to admin — works whether app is open or cold-starting
+function goToAdmin() {
+  console.log("👆 Navigating to /admin");
+  // Small delay so React has time to fully mount before navigation
+  setTimeout(() => {
+    window.location.replace("/admin");
+  }, 300);
+}
+
 export function usePushNotifications() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -41,6 +50,28 @@ export function usePushNotifications() {
       }
 
       await PushNotifications.register();
+
+      // ── Check if the app was LAUNCHED by tapping a notification ──
+      // This handles the cold-start case where the app was closed.
+      // getDeliveredNotifications returns any notification that was
+      // tapped to open the app — if we find a new_order one, navigate.
+      try {
+        const delivered = await PushNotifications.getDeliveredNotifications();
+        const orderNotif = delivered.notifications.find(
+          (n) => n.data?.type === "new_order"
+        );
+        if (orderNotif) {
+          console.log("📬 App opened from notification tap — going to /admin");
+          // Clear it so it doesn't trigger again on next app open
+          await PushNotifications.removeDeliveredNotifications({
+            notifications: [orderNotif],
+          });
+          goToAdmin();
+        }
+      } catch (e) {
+        // Safe to ignore — getDeliveredNotifications may not work on all devices
+        console.warn("Could not check delivered notifications:", e);
+      }
     };
 
     setup().catch(console.error);
@@ -60,15 +91,11 @@ export function usePushNotifications() {
       (err) => console.error("❌ FCM registration error:", err.error)
     );
 
-    // Foreground notification — app is open
-    // Android suppresses the system tray popup when app is open,
-    // so we re-post it as a local scheduled notification
-    // so the admin still gets the heads-up banner + sound
+    // Foreground notification — re-post as local so heads-up shows with sound
     const foregroundListener = PushNotifications.addListener(
       "pushNotificationReceived",
       async (notification) => {
         console.log("📬 Foreground push received:", notification.title);
-
         await PushNotifications.schedule({
           notifications: [
             {
@@ -85,13 +112,14 @@ export function usePushNotifications() {
       }
     );
 
-    // Admin taps notification in system tray → navigate to admin orders
-    // Uses replace() so the back button doesn't get stuck
+    // ── App is OPEN and admin taps the notification banner ──
+    // This fires reliably when the app is already running in foreground
+    // or background (not fully killed)
     const tapListener = PushNotifications.addListener(
       "pushNotificationActionPerformed",
       (action) => {
-        console.log("👆 Notification tapped:", action.notification.title);
-        window.location.replace("/admin");
+        console.log("👆 Tap action performed:", action.notification.title);
+        goToAdmin();
       }
     );
 
