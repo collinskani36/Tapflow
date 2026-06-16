@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CartProvider } from "@/context/CartContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { NetworkGuard } from "@/components/NetworkGuard";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import ShopPage from "./pages/ShopPage";
 import CartPage from "./pages/CartPage";
 import CheckoutPage from "./pages/CheckoutPage";
@@ -17,26 +18,38 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
+// Separate inner component so we can use hooks
+// (hooks can't be called inside the plain arrow function with no body)
+const AppInner = () => {
+  // Registers device with Firebase FCM on mount
+  // Works silently in browser — only activates on real Android device
+  usePushNotifications();
+
+  return (
+    <NetworkGuard>
+      <Toaster />
+      <Sonner />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<ShopPage />} />
+          <Route path="/cart" element={<CartPage />} />
+          <Route path="/checkout" element={<CheckoutPage />} />
+          <Route path="/payment" element={<PaymentPage />} />
+          <Route path="/order-confirmation" element={<OrderConfirmationPage />} />
+          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </BrowserRouter>
+    </NetworkGuard>
+  );
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
         <CartProvider>
-          <NetworkGuard>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
-              <Routes>
-                <Route path="/" element={<ShopPage />} />
-                <Route path="/cart" element={<CartPage />} />
-                <Route path="/checkout" element={<CheckoutPage />} />
-                <Route path="/payment" element={<PaymentPage />} />
-                <Route path="/order-confirmation" element={<OrderConfirmationPage />} />
-                <Route path="/admin" element={<AdminDashboard />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </BrowserRouter>
-          </NetworkGuard>
+          <AppInner />
         </CartProvider>
       </AuthProvider>
     </TooltipProvider>
