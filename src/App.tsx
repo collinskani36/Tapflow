@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CartProvider } from "@/context/CartContext";
 import { AuthProvider } from "@/context/AuthContext";
+import { CustomerProvider } from "@/context/CustomerContext";
 import { NetworkGuard } from "@/components/NetworkGuard";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import ShopPage from "./pages/ShopPage";
@@ -18,11 +19,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
-// Separate inner component so we can use hooks
-// (hooks can't be called inside the plain arrow function with no body)
 const AppInner = () => {
-  // Registers device with Firebase FCM on mount
-  // Works silently in browser — only activates on real Android device
   usePushNotifications();
 
   return (
@@ -48,9 +45,11 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
-        <CartProvider>
-          <AppInner />
-        </CartProvider>
+        <CustomerProvider>
+          <CartProvider>
+            <AppInner />
+          </CartProvider>
+        </CustomerProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

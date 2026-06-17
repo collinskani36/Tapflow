@@ -29,7 +29,6 @@ export async function fetchProducts(): Promise<Product[]> {
 
 export async function fetchAllProducts(): Promise<Product[]> {
   const { data, error } = await supabase.from('products').select('*');
-
   if (error) throw error;
   return data || [];
 }
@@ -73,7 +72,6 @@ export async function deleteProduct(id: string): Promise<void> {
 
 export async function fetchLocations(): Promise<DeliveryLocation[]> {
   const { data, error } = await supabase.from('delivery_locations').select('*');
-
   if (error) throw error;
   return data || [];
 }
@@ -124,9 +122,11 @@ export async function createOrder(data: {
   location_id: string;
   location_description?: string;
   transaction_code: string;
+  customer_id?: string | null;
   items: {
     product_id: string;
     quantity: number;
+    variant_price?: number | null; // ← actual price customer selected
   }[];
 }): Promise<Order> {
   const { data: orderId, error } = await supabase.rpc(
@@ -134,9 +134,10 @@ export async function createOrder(data: {
     {
       p_phone: data.phone_number,
       p_location_id: data.location_id,
-      p_location_description: data.location_description,
+      p_location_description: data.location_description ?? null,
       p_transaction_code: data.transaction_code,
       p_items: data.items,
+      p_customer_id: data.customer_id ?? null,
     }
   );
 

@@ -1,9 +1,11 @@
 import { Minus, Plus, Trash2 } from 'lucide-react';
-import { CartItem as CartItemType } from '@/context/CartContext'; // ← import from context, not @/types
+import { CartItem as CartItemType } from '@/context/CartContext';
 import { useCart } from '@/context/CartContext';
 
-const CartItemRow = ({ product, quantity, variantSize }: CartItemType) => { // ← destructure variantSize
+const CartItemRow = ({ product, quantity, variantSize, variantPrice }: CartItemType) => {
   const { updateQuantity, removeItem } = useCart();
+
+  const displayPrice = variantPrice ?? product.price;
 
   return (
     <div className="flex items-center gap-4 glass-card rounded-lg p-3">
@@ -18,24 +20,27 @@ const CartItemRow = ({ product, quantity, variantSize }: CartItemType) => { // �
       </div>
       <div className="flex-1 min-w-0">
         <h4 className="font-medium text-foreground truncate">{product.name}</h4>
-        <p className="text-sm text-primary">KSh {product.price.toLocaleString()}</p>
+        {variantSize && (
+          <p className="text-xs text-muted-foreground">{variantSize}</p>
+        )}
+        <p className="text-sm text-primary">KSh {displayPrice.toLocaleString()}</p>
       </div>
       <div className="flex items-center gap-2">
         <button
-          onClick={() => updateQuantity(product.id, quantity - 1, variantSize)} // ← pass variantSize
+          onClick={() => updateQuantity(product.id, quantity - 1, variantSize)}
           className="p-1 rounded-full border border-border hover:border-primary transition-colors"
         >
           <Minus className="w-4 h-4" />
         </button>
         <span className="w-6 text-center font-medium">{quantity}</span>
         <button
-          onClick={() => updateQuantity(product.id, quantity + 1, variantSize)} // ← pass variantSize
+          onClick={() => updateQuantity(product.id, quantity + 1, variantSize)}
           className="p-1 rounded-full border border-border hover:border-primary transition-colors"
         >
           <Plus className="w-4 h-4" />
         </button>
         <button
-          onClick={() => removeItem(product.id, variantSize)} // ← pass variantSize
+          onClick={() => removeItem(product.id, variantSize)}
           className="p-1 text-destructive hover:opacity-80 ml-1"
         >
           <Trash2 className="w-4 h-4" />

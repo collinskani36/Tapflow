@@ -13,8 +13,6 @@ const PaymentPage = () => {
   const [submitting, setSubmitting] = useState(false);
 
   const checkout = JSON.parse(sessionStorage.getItem('checkout') || '{}');
-
-  // 🔥 IMPORTANT: fallback safety
   const total = Number(checkout.total ?? subtotal) || 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,17 +22,16 @@ const PaymentPage = () => {
     try {
       setSubmitting(true);
 
-      // 🔥 ONLY CHANGE: match RPC backend structure
       const order = await createOrder({
         phone_number: checkout.phone,
         location_id: checkout.locationId,
         location_description: checkout.description,
         transaction_code: txCode.trim().toUpperCase(),
-
-        // ❌ NO PRICES SENT (backend handles everything now)
+        customer_id: checkout.customerId ?? null,
         items: items.map((i) => ({
           product_id: i.product.id,
           quantity: i.quantity,
+          variant_price: i.variantPrice ?? null, // ← send the actual selected price
         })),
       });
 
@@ -58,7 +55,6 @@ const PaymentPage = () => {
       <Header />
 
       <main className="container py-6 max-w-lg mx-auto space-y-6">
-        {/* Back */}
         <button
           onClick={() => navigate(-1)}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -67,26 +63,19 @@ const PaymentPage = () => {
         </button>
 
         <div className="glass-card rounded-xl p-6 space-y-5 border border-primary/10">
-          {/* Header */}
           <div className="text-center space-y-3">
             <div className="mx-auto w-14 h-14 rounded-full gold-gradient flex items-center justify-center">
               <Smartphone className="w-7 h-7 text-primary-foreground" />
             </div>
-            <h1 className="font-display text-2xl text-foreground">
-              Pay via M-Pesa
-            </h1>
+            <h1 className="font-display text-2xl text-foreground">Pay via M-Pesa</h1>
             <p className="text-muted-foreground text-sm">Buy Goods</p>
           </div>
 
-          {/* Till (UNCHANGED) */}
           <div className="bg-secondary rounded-lg p-4 text-center space-y-1">
             <p className="text-sm text-muted-foreground">Till Number</p>
-            <p className="text-3xl font-bold gold-text tracking-wider">
-              123456
-            </p>
+            <p className="text-3xl font-bold gold-text tracking-wider">123456</p>
           </div>
 
-          {/* Amount (UNCHANGED) */}
           <div className="bg-secondary rounded-lg p-4 text-center">
             <p className="text-sm text-muted-foreground">Amount to Pay</p>
             <p className="text-2xl font-bold text-foreground">
@@ -98,7 +87,6 @@ const PaymentPage = () => {
             After paying, enter the M-Pesa transaction code below.
           </p>
 
-          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">

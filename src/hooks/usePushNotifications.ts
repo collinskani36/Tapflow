@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { PushNotifications } from "@capacitor/push-notifications";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase";
 
@@ -15,12 +16,11 @@ async function saveFcmToken(token: string) {
   }
 }
 
-// Navigate to admin — works whether app is open or cold-starting
-function goToAdmin() {
-  console.log("👆 Navigating to /admin");
-  // Small delay so React has time to fully mount before navigation
+// Navigate to admin orders tab — works for cold start and warm start
+function goToAdminOrders() {
+  console.log("👆 Navigating to /admin?tab=orders");
   setTimeout(() => {
-    window.location.replace("/admin");
+    window.location.replace("/admin?tab=orders");
   }, 300);
 }
 
@@ -40,6 +40,8 @@ export function usePushNotifications() {
         lights: true,
       });
 
+      await LocalNotifications.requestPermissions();
+
       let permStatus = await PushNotifications.checkPermissions();
       if (permStatus.receive === "prompt") {
         permStatus = await PushNotifications.requestPermissions();
@@ -51,10 +53,7 @@ export function usePushNotifications() {
 
       await PushNotifications.register();
 
-      // ── Check if the app was LAUNCHED by tapping a notification ──
-      // This handles the cold-start case where the app was closed.
-      // getDeliveredNotifications returns any notification that was
-      // tapped to open the app — if we find a new_order one, navigate.
+      // Cold-start: app was launched by tapping a notification
       try {
         const delivered = await PushNotifications.getDeliveredNotifications();
         const orderNotif = delivered.notifications.find(
@@ -62,21 +61,18 @@ export function usePushNotifications() {
         );
         if (orderNotif) {
           console.log("📬 App opened from notification tap — going to /admin");
-          // Clear it so it doesn't trigger again on next app open
           await PushNotifications.removeDeliveredNotifications({
             notifications: [orderNotif],
           });
-          goToAdmin();
+          goToAdminOrders();
         }
       } catch (e) {
-        // Safe to ignore — getDeliveredNotifications may not work on all devices
         console.warn("Could not check delivered notifications:", e);
       }
     };
 
     setup().catch(console.error);
 
-    // Token received → save to Supabase
     const regListener = PushNotifications.addListener(
       "registration",
       (token) => {
@@ -85,18 +81,17 @@ export function usePushNotifications() {
       }
     );
 
-    // Registration failed
     const regErrListener = PushNotifications.addListener(
       "registrationError",
       (err) => console.error("❌ FCM registration error:", err.error)
     );
 
-    // Foreground notification — re-post as local so heads-up shows with sound
+    // Foreground: re-post as local notification
     const foregroundListener = PushNotifications.addListener(
       "pushNotificationReceived",
       async (notification) => {
         console.log("📬 Foreground push received:", notification.title);
-        await PushNotifications.schedule({
+        await LocalNotifications.schedule({
           notifications: [
             {
               id: Date.now(),
@@ -106,20 +101,19 @@ export function usePushNotifications() {
               sound: "default",
               actionTypeId: "",
               extra: notification.data ?? {},
+              schedule: { at: new Date(Date.now() + 100) },
             },
           ],
         });
       }
     );
 
-    // ── App is OPEN and admin taps the notification banner ──
-    // This fires reliably when the app is already running in foreground
-    // or background (not fully killed)
+    // App open/background: admin taps the notification banner
     const tapListener = PushNotifications.addListener(
       "pushNotificationActionPerformed",
       (action) => {
         console.log("👆 Tap action performed:", action.notification.title);
-        goToAdmin();
+        goToAdminOrders();
       }
     );
 
