@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Network } from "@capacitor/network";
 
-// This describes the shape of what we track
+
 interface NetworkState {
-  isOnline: boolean;         // Are we connected right now?
-  isReconnecting: boolean;   // Did we JUST come back online?
-  connectionType: string;    // "wifi", "cellular", "none"
+  isOnline: boolean;         
+  isReconnecting: boolean;   
+  connectionType: string;    
 }
 
 export function useNetworkStatus(): NetworkState {
