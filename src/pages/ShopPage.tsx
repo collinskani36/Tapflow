@@ -350,7 +350,7 @@ const ShopPage = () => {
           >
             <Sparkles className="w-3 h-3 gold-text" />
             <span className="text-xs tracking-widest uppercase text-muted-foreground font-medium">
-              Action · Eldoret
+              Uthiru 
             </span>
             <Sparkles className="w-3 h-3 gold-text" />
           </motion.div>
@@ -362,7 +362,7 @@ const ShopPage = () => {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="font-display text-4xl md:text-6xl text-foreground leading-tight tracking-tight mb-3"
           >
-            Cheers
+            Complex
             <br />
             <span className="gold-text">Wines & Spirits</span>
           </motion.h1>

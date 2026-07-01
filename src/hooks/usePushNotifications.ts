@@ -32,7 +32,7 @@ export function usePushNotifications() {
       await PushNotifications.createChannel({
         id: "default_channel",
         name: "Order Notifications",
-        description: "New order alerts for Cheers Lounge admin",
+        description: "New order alerts for Complex Liquors admin",
         importance: 5,
         visibility: 1,
         sound: "default",
