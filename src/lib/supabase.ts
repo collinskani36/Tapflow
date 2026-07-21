@@ -119,10 +119,15 @@ export async function deleteLocation(id: string): Promise<void> {
 
 export async function createOrder(data: {
   phone_number: string;
-  location_id: string;
+  location_id?: string | null; // null when the map-pin flow was used instead
   location_description?: string;
   transaction_code: string;
   customer_id?: string | null;
+  // Pin-based delivery — null when the fallback dropdown was used instead
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
+  delivery_address?: string | null;
+  distance_km?: number | null;
   items: {
     product_id: string;
     quantity: number;
@@ -133,11 +138,15 @@ export async function createOrder(data: {
     'create_order_with_items',
     {
       p_phone: data.phone_number,
-      p_location_id: data.location_id,
+      p_location_id: data.location_id ?? null,
       p_location_description: data.location_description ?? null,
       p_transaction_code: data.transaction_code,
       p_items: data.items,
       p_customer_id: data.customer_id ?? null,
+      p_delivery_lat: data.delivery_lat ?? null,
+      p_delivery_lng: data.delivery_lng ?? null,
+      p_delivery_address: data.delivery_address ?? null,
+      p_distance_km: data.distance_km ?? null,
     }
   );
 

@@ -29,6 +29,7 @@ android/app/google-services.json
 android/.gradle
 android/build
 android/app/build
+android/
 
 # Capacitor generated
 android/capacitor-cordova-android-plugins/build
@@ -43,3 +44,10 @@ android/capacitor-cordova-android-plugins/build
 *.njsproj
 *.sln
 *.sw?
+
+
+.vscode/
+supabase/
+ android/app/capacitor.build.gradle
+ android/app/src/main/java/com/myliqour/com/MainActivity.java
+ android/app/src/main/res/values/strings.xml

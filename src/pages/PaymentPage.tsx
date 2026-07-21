@@ -24,10 +24,15 @@ const PaymentPage = () => {
 
       const order = await createOrder({
         phone_number: checkout.phone,
-        location_id: checkout.locationId,
+        location_id: checkout.locationId ?? null,
         location_description: checkout.description,
         transaction_code: txCode.trim().toUpperCase(),
         customer_id: checkout.customerId ?? null,
+        // Pin-based delivery — null when the fallback dropdown was used instead
+        delivery_lat: checkout.deliveryLat ?? null,
+        delivery_lng: checkout.deliveryLng ?? null,
+        delivery_address: checkout.deliveryAddress ?? null,
+        distance_km: checkout.distanceKm ?? null,
         items: items.map((i) => ({
           product_id: i.product.id,
           quantity: i.quantity,

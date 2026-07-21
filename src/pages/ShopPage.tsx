@@ -1,5 +1,6 @@
+// src/pages/ShopPage.tsx (reverted - no rider login)
 import { useEffect, useState, useRef } from 'react';
-import { Wine, Search, X, Plus, Minus, ShoppingCart, ChevronRight, Sparkles } from 'lucide-react';
+import { Wine, Search, X, Plus, Minus, ShoppingCart, ChevronRight, Sparkles } from 'lucide-react'; // Removed Bike
 import Header from '@/components/Header';
 import StickyCartButton from '@/components/StickyCartButton';
 import { Product } from '@/types';

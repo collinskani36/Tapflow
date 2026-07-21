@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.myliqour.com',
-  appName: 'Cheers Lounge',
+  appName: 'Complex Liquors',
   webDir: 'dist',
 
   server: {
@@ -12,8 +12,8 @@ const config: CapacitorConfig = {
 
   plugins: {
     SplashScreen: {
-      launchShowDuration: 3000,
-      launchAutoHide: true,
+      launchShowDuration: 0,
+      launchAutoHide: false,
       backgroundColor: '#000000',
       androidSplashResourceName: 'splash',
       showSpinner: false,

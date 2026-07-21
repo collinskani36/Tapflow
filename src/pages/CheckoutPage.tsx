@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, User, LogIn } from 'lucide-react';
+import { ArrowLeft, MapPin, User, LogIn, List } from 'lucide-react';
 import Header from '@/components/Header';
 import CustomerAuthModal from '@/components/CustomerAuthModal';
+import LocationPicker from '@/components/LocationPicker';
 import { useCart } from '@/context/CartContext';
 import { useCustomer } from '@/context/CustomerContext';
 import { DeliveryLocation } from '@/types';
 import { fetchLocations } from '@/lib/supabase';
+
+interface PinLocation {
+  lat: number;
+  lng: number;
+  address: string;
+  distanceKm: number;
+  fee: number;
+}
 
 const CheckoutPage = () => {
   const { items, subtotal } = useCart();
@@ -15,9 +24,13 @@ const CheckoutPage = () => {
 
   const [locations, setLocations] = useState<DeliveryLocation[]>([]);
   const [phone, setPhone] = useState('');
-  const [locationId, setLocationId] = useState('');
   const [description, setDescription] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // New pin-based flow
+  const [pinLocation, setPinLocation] = useState<PinLocation | null>(null);
+  const [useFallback, setUseFallback] = useState(false);
+  const [locationId, setLocationId] = useState('');
 
   useEffect(() => {
     if (items.length === 0) navigate('/cart');
@@ -31,24 +44,37 @@ const CheckoutPage = () => {
   }, [items, navigate]);
 
   const selectedLocation = locations.find((l) => l.id === locationId);
-  const deliveryFee = selectedLocation ? Number(selectedLocation.delivery_fee) : 0;
+
+  const deliveryFee = useFallback
+    ? selectedLocation
+      ? Number(selectedLocation.delivery_fee)
+      : 0
+    : pinLocation?.fee ?? 0;
+
   const safeSubtotal = Number(subtotal) || 0;
   const total = safeSubtotal + deliveryFee;
 
+  const hasValidDelivery = useFallback ? !!locationId : !!pinLocation;
+
   const handleContinue = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phone || !locationId) return;
+    if (!phone || !hasValidDelivery) return;
 
     sessionStorage.setItem(
       'checkout',
       JSON.stringify({
         phone,
-        locationId,
         description,
         total,
         deliveryFee,
-        // attach customer id if signed in — PaymentPage should read this and save to the order
         customerId: customer?.id ?? null,
+        // Pin-based delivery (primary flow)
+        deliveryLat: useFallback ? null : pinLocation?.lat ?? null,
+        deliveryLng: useFallback ? null : pinLocation?.lng ?? null,
+        deliveryAddress: useFallback ? null : pinLocation?.address ?? null,
+        distanceKm: useFallback ? null : pinLocation?.distanceKm ?? null,
+        // Fallback dropdown flow
+        locationId: useFallback ? locationId : null,
       })
     );
 
@@ -116,29 +142,78 @@ const CheckoutPage = () => {
             />
           </div>
 
-          {/* Location */}
+          {/* Delivery location */}
           <div>
-            <label className="text-sm text-muted-foreground mb-1 block">Delivery Location *</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm text-muted-foreground block">Delivery Location *</label>
+              {!useFallback && (
+                <button
+                  type="button"
+                  onClick={() => setUseFallback(true)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <List className="w-3 h-3" /> Pick from list instead
+                </button>
+              )}
+            </div>
 
-            {locations.length === 0 ? (
-              <div className="flex items-center gap-2 text-muted-foreground text-sm py-3">
-                <MapPin className="w-4 h-4" />
-                No delivery locations set up yet.
-              </div>
+            {!useFallback ? (
+              <LocationPicker
+                onConfirm={(data) => {
+                  if (data.fee === null) {
+                    // Outside delivery range — nudge toward fallback list
+                    setPinLocation(null);
+                    setUseFallback(true);
+                    return;
+                  }
+                  setPinLocation({
+                    lat: data.lat,
+                    lng: data.lng,
+                    address: data.address,
+                    distanceKm: data.distanceKm,
+                    fee: data.fee,
+                  });
+                }}
+              />
             ) : (
-              <select
-                required
-                value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                <option value="">Select location</option>
-                {locations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name} — KSh {Number(loc.delivery_fee).toLocaleString()}
-                  </option>
-                ))}
-              </select>
+              <div className="space-y-2">
+                {locations.length === 0 ? (
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm py-3">
+                    <MapPin className="w-4 h-4" />
+                    No delivery locations set up yet.
+                  </div>
+                ) : (
+                  <select
+                    required
+                    value={locationId}
+                    onChange={(e) => setLocationId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="">Select location</option>
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} — KSh {Number(loc.delivery_fee).toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseFallback(false);
+                    setLocationId('');
+                  }}
+                  className="text-xs text-primary hover:opacity-80"
+                >
+                  Use map pin instead
+                </button>
+              </div>
+            )}
+
+            {pinLocation && !useFallback && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Delivering to: {pinLocation.address} ({pinLocation.distanceKm.toFixed(1)} km)
+              </p>
             )}
           </div>
 
@@ -174,7 +249,8 @@ const CheckoutPage = () => {
 
           <button
             type="submit"
-            className="w-full py-3 rounded-lg gold-gradient text-primary-foreground font-medium hover:opacity-90 transition-opacity"
+            disabled={!hasValidDelivery}
+            className="w-full py-3 rounded-lg gold-gradient text-primary-foreground font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Continue to Payment
           </button>

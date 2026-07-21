@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, UserCheck, Phone, Loader2 } from 'lucide-react';
+import { Plus, Trash2, UserCheck, Phone, Loader2, Copy, Check, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 interface Rider {
@@ -7,6 +7,12 @@ interface Rider {
   name: string;
   phone: string;
   created_at: string;
+}
+
+interface NewRiderCredentials {
+  name: string;
+  email: string;
+  password: string;
 }
 
 const AdminRiders = () => {
@@ -18,6 +24,11 @@ const AdminRiders = () => {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  // Set only right after a successful create — shown once, then discarded.
+  // Nothing re-fetches this; if the admin navigates away, it's gone for good.
+  const [newCredentials, setNewCredentials] = useState<NewRiderCredentials | null>(null);
 
   // ---------------------------
   // LOAD RIDERS
@@ -38,7 +49,7 @@ const AdminRiders = () => {
   }, []);
 
   // ---------------------------
-  // ADD RIDER
+  // ADD RIDER — via Edge Function (creates auth account + riders row + profile link)
   // ---------------------------
   const handleAdd = async () => {
     if (!name.trim() || !phone.trim()) {
@@ -49,20 +60,40 @@ const AdminRiders = () => {
     setSaving(true);
     setError('');
 
-    const { error } = await supabase
-      .from('riders')
-      .insert([{ name: name.trim(), phone: phone.trim() }]);
-
-    if (error) {
-      setError('Failed to add rider. Try again.');
-    } else {
-      setName('');
-      setPhone('');
-      setAdding(false);
-      await loadRiders();
-    }
+    const { data, error: fnError } = await supabase.functions.invoke('create-rider-account', {
+      body: { name: name.trim(), phone: phone.trim() },
+    });
 
     setSaving(false);
+
+    // supabase.functions.invoke doesn't throw on non-2xx by default — the
+    // error payload comes back in `data.error` for our function's shape,
+    // or in `fnError` for transport-level failures (network, timeout, etc.)
+    if (fnError) {
+      setError('Could not reach the server. Check your connection and try again.');
+      return;
+    }
+
+    if (data?.error) {
+      setError(data.error);
+      return;
+    }
+
+    if (!data?.success) {
+      setError('Something went wrong creating the rider. Try again.');
+      return;
+    }
+
+    // Success — show the one-time credentials, reset the form, refresh the list
+    setNewCredentials({
+      name: name.trim(),
+      email: data.credentials.email,
+      password: data.credentials.password,
+    });
+    setName('');
+    setPhone('');
+    setAdding(false);
+    await loadRiders();
   };
 
   // ---------------------------
@@ -83,6 +114,15 @@ const AdminRiders = () => {
     }
 
     setDeletingId(null);
+  };
+
+  const handleCopyCredentials = () => {
+    if (!newCredentials) return;
+    navigator.clipboard.writeText(
+      `Email: ${newCredentials.email}\nPassword: ${newCredentials.password}`
+    );
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   // ---------------------------
@@ -114,6 +154,50 @@ const AdminRiders = () => {
         )}
       </div>
 
+      {/* ONE-TIME CREDENTIALS CARD */}
+      {newCredentials && (
+        <div className="glass-card rounded-xl p-4 border border-primary/40 bg-primary/5 space-y-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                {newCredentials.name}'s login — save this now
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                This password won't be shown again. Relay it to the rider directly.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-background rounded-lg p-3 space-y-1 font-mono text-xs">
+            <p className="text-foreground">
+              <span className="text-muted-foreground">Email: </span>
+              {newCredentials.email}
+            </p>
+            <p className="text-foreground">
+              <span className="text-muted-foreground">Password: </span>
+              {newCredentials.password}
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleCopyCredentials}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-secondary transition"
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? 'Copied' : 'Copy credentials'}
+            </button>
+            <button
+              onClick={() => setNewCredentials(null)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground transition"
+            >
+              Done, I've saved it
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ADD FORM */}
       {adding && (
         <div className="glass-card rounded-xl p-4 border border-border/50 space-y-3">
@@ -143,6 +227,10 @@ const AdminRiders = () => {
             </div>
           </div>
 
+          <p className="text-[11px] text-muted-foreground">
+            This creates a login for the rider automatically — you'll get a one-time password to share with them.
+          </p>
+
           {error && (
             <p className="text-xs text-destructive">{error}</p>
           )}
@@ -158,7 +246,7 @@ const AdminRiders = () => {
               ) : (
                 <Plus className="w-4 h-4" />
               )}
-              {saving ? 'Saving…' : 'Save Rider'}
+              {saving ? 'Creating…' : 'Save Rider'}
             </button>
 
             <button

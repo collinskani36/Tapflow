@@ -1,8 +1,9 @@
+// src/components/Header.tsx
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ShoppingCart, Wine, User } from 'lucide-react';
+import { ShoppingCart, Wine, User, Bike } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
-import AdminLoginModal from '@/components/AdminLoginModal';
+import LoginModal from '@/components/auth/LoginModal'; // Renamed from AdminLoginModal
 import CustomerAuthModal from '@/components/CustomerAuthModal';
 import CustomerAccountDrawer from '@/components/CustomerAccountDrawer';
 import { useAuth } from '@/context/AuthContext';
@@ -10,23 +11,31 @@ import { useCustomer } from '@/context/CustomerContext';
 
 const Header = () => {
   const { totalItems } = useCart();
-  const { isAdmin } = useAuth();
+  const { isAdmin, isRider } = useAuth();
   const { customer } = useCustomer();
 
   const [tapCount, setTapCount] = useState(0);
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginMode, setLoginMode] = useState<'admin' | 'rider'>('admin');
   const [showCustomerAuth, setShowCustomerAuth] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
 
   const handleLogoTap = () => {
     const next = tapCount + 1;
     if (next >= 5) {
-      setShowAdminLogin(true);
+      setLoginMode('admin');
+      setShowLoginModal(true);
       setTapCount(0);
     } else {
       setTapCount(next);
       setTimeout(() => setTapCount(0), 2000);
     }
+  };
+
+  // New: Rider login trigger - tap on bike icon in header
+  const handleRiderTrigger = () => {
+    setLoginMode('rider');
+    setShowLoginModal(true);
   };
 
   return (
@@ -39,10 +48,28 @@ const Header = () => {
           </button>
 
           <nav className="flex items-center gap-3">
+            {/* Show admin or rider dashboard link */}
             {isAdmin && (
               <Link to="/admin" className="text-sm text-primary hover:opacity-80 transition-opacity font-medium">
                 Dashboard
               </Link>
+            )}
+            {isRider && (
+              <Link to="/rider/dashboard" className="text-sm text-primary hover:opacity-80 transition-opacity font-medium">
+                🏍️ Deliveries
+              </Link>
+            )}
+
+            {/* Rider login trigger - bike icon (only show when not logged in as rider/admin) */}
+            {!isAdmin && !isRider && (
+              <button
+                onClick={handleRiderTrigger}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-primary/20 hover:border-primary/40 text-primary hover:bg-primary/5 transition-colors text-xs"
+                title="Rider Login"
+              >
+                <Bike className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Rider</span>
+              </button>
             )}
 
             {/* Customer account button */}
@@ -80,7 +107,12 @@ const Header = () => {
         </div>
       </header>
 
-      <AdminLoginModal open={showAdminLogin} onClose={() => setShowAdminLogin(false)} />
+      {/* Updated login modal */}
+      <LoginModal 
+        open={showLoginModal} 
+        onClose={() => setShowLoginModal(false)} 
+        defaultMode={loginMode}
+      />
       <CustomerAuthModal open={showCustomerAuth} onClose={() => setShowCustomerAuth(false)} />
       <CustomerAccountDrawer open={showAccount} onClose={() => setShowAccount(false)} />
     </>
