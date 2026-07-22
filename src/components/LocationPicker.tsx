@@ -82,6 +82,7 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
   const [locating, setLocating] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [locateError, setLocateError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const hasRequestedRef = useRef(false);
   const [hasLocated, setHasLocated] = useState(false);
@@ -89,7 +90,7 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
   // Check browser permission state before attempting to access location
   const checkWebPermission = async (): Promise<PermissionState> => {
     if (!navigator.permissions) return 'prompt'; // Fallback if Permissions API unavailable
-    
+
     try {
       const result = await navigator.permissions.query({ name: 'geolocation' });
       return result.state;
@@ -98,9 +99,34 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
     }
   };
 
+  // Retries getCurrentPosition once with relaxed accuracy/timeout if the
+  // first (high-accuracy) attempt times out or fails to get a fix. GPS-only
+  // high-accuracy fixes are frequently slow/unavailable indoors, so falling
+  // back to network-based positioning with a longer timeout meaningfully
+  // improves success rate instead of just reporting "denied".
+  const getPositionWithFallback = async () => {
+    try {
+      return await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 10000,
+      });
+    } catch (err: any) {
+      // PERMISSION_DENIED (code 1) should never be retried — bail immediately.
+      if (err?.code === 1) throw err;
+
+      // Otherwise (timeout / position unavailable) retry once with a longer
+      // timeout and lower accuracy requirement.
+      return await Geolocation.getCurrentPosition({
+        enableHighAccuracy: false,
+        timeout: 20000,
+      });
+    }
+  };
+
   const locateUser = async () => {
     setLocating(true);
     setPermissionDenied(false);
+    setLocateError(null);
 
     // Native (Android/iOS): requestPermissions() shows a real OS dialog and
     // its result is trustworthy, so gate on it before asking for a position.
@@ -113,15 +139,18 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
           return;
         }
 
-        const coords = await Geolocation.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: 10000,
-        });
+        const coords = await getPositionWithFallback();
         setPosition([coords.coords.latitude, coords.coords.longitude]);
         setHasLocated(true);
-      } catch {
-        // Permission denied or unavailable — user can still drop pin manually
-        setPermissionDenied(true);
+      } catch (error: any) {
+        // Only treat as "denied" if that's actually what happened. Timeouts
+        // and position-unavailable errors are transient — surface those as
+        // a retryable error instead of the misleading "denied" message.
+        if (error?.code === 1) {
+          setPermissionDenied(true);
+        } else {
+          setLocateError("Couldn't get a location fix — try again, or drag the pin manually.");
+        }
       } finally {
         setLocating(false);
       }
@@ -146,10 +175,7 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
       // Permission state is either 'prompt' (will show browser dialog) or
       // 'granted' (already allowed). In both cases, getCurrentPosition will
       // work or show the appropriate prompt.
-      const coords = await Geolocation.getCurrentPosition({
-        enableHighAccuracy: true,
-        timeout: 10000,
-      });
+      const coords = await getPositionWithFallback();
       setPosition([coords.coords.latitude, coords.coords.longitude]);
       setHasLocated(true);
     } catch (error: any) {
@@ -158,9 +184,9 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
       // "denied" message — they're transient failures the user can retry.
       if (error?.code === 1) {
         setPermissionDenied(true);
+      } else {
+        setLocateError("Couldn't get a location fix — try again, or drag the pin manually.");
       }
-      // For other errors (timeout, position unavailable), we silently fail
-      // without showing a "denied" message — user can retry or drag the pin.
     } finally {
       setLocating(false);
     }
@@ -204,14 +230,28 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
   };
 
   return (
-    <div className="space-y-3">
+    // `isolate` pins the Leaflet map (and any high z-index elements inside
+    // it, like the "Use my location" button) into its own stacking context.
+    // Without this, Leaflet's internal panes/controls (z-index up to ~1000)
+    // and the locate button (z-[1000]) compare directly against page-level
+    // elements like modals, and can render on top of them even though the
+    // modal is "later" in the DOM. With `isolate`, only this wrapper's own
+    // z-index (unset/auto here) is compared at the page level, so a modal
+    // with a higher z-index will correctly sit above the whole map.
+    <div className="space-y-3 isolate relative z-0">
       {permissionDenied && (
         <div className="text-xs text-muted-foreground bg-secondary/60 rounded-lg px-3 py-2">
           Location access was denied — tap or drag the pin below to set your delivery spot manually.
         </div>
       )}
 
-      {!permissionDenied && !hasLocated && !locating && !Capacitor.isNativePlatform() && (
+      {locateError && !permissionDenied && (
+        <div className="text-xs text-muted-foreground bg-secondary/60 rounded-lg px-3 py-2">
+          {locateError}
+        </div>
+      )}
+
+      {!permissionDenied && !locateError && !hasLocated && !locating && !Capacitor.isNativePlatform() && (
         <div className="text-xs text-muted-foreground bg-secondary/60 rounded-lg px-3 py-2">
           Tap "Use my location" below to auto-fill your delivery spot, or drag the pin manually.
         </div>

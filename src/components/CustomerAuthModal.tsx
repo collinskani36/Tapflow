@@ -57,7 +57,10 @@ const CustomerAuthModal = ({ open, onClose }: Props) => {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={handleClose}
-            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
+            // Raised above LocationPicker's map (which is isolated into its
+            // own stacking context) so this reliably renders on top
+            // regardless of where LocationPicker is mounted on the page.
+            className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm"
           />
 
           {/* Sheet */}
@@ -66,7 +69,7 @@ const CustomerAuthModal = ({ open, onClose }: Props) => {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 md:inset-0 md:m-auto z-50 md:max-w-sm md:max-h-fit md:rounded-2xl rounded-t-2xl bg-background overflow-hidden"
+            className="fixed bottom-0 left-0 right-0 md:inset-0 md:m-auto z-[100] md:max-w-sm md:max-h-fit md:rounded-2xl rounded-t-2xl bg-background overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drag handle (mobile) */}

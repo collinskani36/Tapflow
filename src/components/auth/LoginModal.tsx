@@ -1,7 +1,7 @@
 // src/components/auth/LoginModal.tsx
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, X, User, Shield, Bike } from 'lucide-react';
+import { Lock, X, Shield, Bike } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -14,19 +14,23 @@ interface LoginModalProps {
 }
 
 const LoginModal = ({ open, onClose, defaultMode = 'admin' }: LoginModalProps) => {
-  const { login, isAdmin, isRider } = useAuth();
+  const { login, logout } = useAuth();
   const navigate = useNavigate();
 
-  const [mode, setMode] = useState<LoginMode>(defaultMode);
+  // Mode is locked to whatever the header trigger opened this with — the
+  // bike icon opens rider-only, triple-tapping the logo opens admin-only.
+  // There is intentionally no in-modal switcher, so one entry point can't
+  // be used to reach the other role's login.
+  const mode: LoginMode = defaultMode;
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Reset mode when modal opens
+  // Reset fields whenever the modal opens (including if it's reopened in a different mode)
   useEffect(() => {
     if (open) {
-      setMode(defaultMode);
       setEmail('');
       setPassword('');
       setError('');
@@ -47,19 +51,21 @@ const LoginModal = ({ open, onClose, defaultMode = 'admin' }: LoginModalProps) =
       return;
     }
 
-    // Redirect based on role
-    if (result.role === 'admin') {
-      onClose();
-      navigate('/admin');
-    } else if (result.role === 'rider') {
-      onClose();
-      navigate('/rider/dashboard');
-    } else {
-      setError('Access denied. This login is for admins and riders only.');
-      // Logout to clean up
-      await login('', ''); // This won't work, we need proper logout
-      // Actually, let's just show error
+    // Guard: the credentials were valid, but the account's role doesn't
+    // match the login surface it was submitted on (e.g. a rider account
+    // used on the admin-only modal, or vice versa).
+    if (result.role !== mode) {
+      setError(
+        mode === 'admin'
+          ? 'Access denied. This login is for admins only.'
+          : 'Access denied. This login is for riders only.'
+      );
+      await logout();
+      return;
     }
+
+    onClose();
+    navigate(mode === 'admin' ? '/admin' : '/rider/dashboard');
   };
 
   const modeIcon = mode === 'admin' ? <Shield className="w-5 h-5 text-primary" /> : <Bike className="w-5 h-5 text-primary" />;
@@ -73,7 +79,10 @@ const LoginModal = ({ open, onClose, defaultMode = 'admin' }: LoginModalProps) =
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
+          // Raised above LocationPicker's map (which is isolated into its
+          // own stacking context, capped effectively at page z ~0) so this
+          // reliably renders on top regardless of where it's mounted.
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm"
           onClick={(e) => {
             if (e.target === e.currentTarget) onClose();
           }}
@@ -100,32 +109,6 @@ const LoginModal = ({ open, onClose, defaultMode = 'admin' }: LoginModalProps) =
             </div>
 
             <p className="text-sm text-muted-foreground -mt-2">{modeSubtitle}</p>
-
-            {/* Mode Switcher */}
-            <div className="flex gap-2 bg-secondary/50 rounded-lg p-1">
-              <button
-                onClick={() => setMode('admin')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition ${
-                  mode === 'admin'
-                    ? 'bg-primary text-primary-foreground shadow-lg'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Shield className="w-4 h-4" />
-                Admin
-              </button>
-              <button
-                onClick={() => setMode('rider')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition ${
-                  mode === 'rider'
-                    ? 'bg-primary text-primary-foreground shadow-lg'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Bike className="w-4 h-4" />
-                Rider
-              </button>
-            </div>
 
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="space-y-4">

@@ -20,9 +20,11 @@ const Header = () => {
   const [showCustomerAuth, setShowCustomerAuth] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
 
+  // Triple-tap the logo to open the admin login. Kept as a tap-count gesture
+  // (not a visible button) so it stays out of the way for regular customers.
   const handleLogoTap = () => {
     const next = tapCount + 1;
-    if (next >= 5) {
+    if (next >= 3) {
       setLoginMode('admin');
       setShowLoginModal(true);
       setTapCount(0);
@@ -32,7 +34,9 @@ const Header = () => {
     }
   };
 
-  // New: Rider login trigger - tap on bike icon in header
+  // Bike icon opens the rider login only — riders never see or can reach
+  // the admin mode from here, since LoginModal no longer exposes a mode
+  // switcher and just renders whatever mode it's opened with.
   const handleRiderTrigger = () => {
     setLoginMode('rider');
     setShowLoginModal(true);
@@ -108,9 +112,9 @@ const Header = () => {
       </header>
 
       {/* Updated login modal */}
-      <LoginModal 
-        open={showLoginModal} 
-        onClose={() => setShowLoginModal(false)} 
+      <LoginModal
+        open={showLoginModal}
+        onClose={() => setShowLoginModal(false)}
         defaultMode={loginMode}
       />
       <CustomerAuthModal open={showCustomerAuth} onClose={() => setShowCustomerAuth(false)} />
