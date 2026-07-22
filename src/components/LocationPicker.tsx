@@ -5,8 +5,16 @@ import 'leaflet/dist/leaflet.css';
 import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { Locate } from 'lucide-react';
-import { LOUNGE_COORDS, distanceFromLounge, calculateDeliveryFee } from '@/lib/geo';
+import {
+  LOUNGE_COORDS,
+  distanceFromLounge,
+  estimateRoadDistance,
+  calculateDeliveryFee,
+  DEFAULT_DELIVERY_PRICING,
+  DeliveryPricing,
+} from '@/lib/geo';
 import { reverseGeocode } from '@/lib/geocode';
+import { supabase } from '@/lib/supabase';
 
 // Fix default marker icon (breaks otherwise when bundled)
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -17,6 +25,10 @@ L.Icon.Default.mergeOptions({
 });
 
 interface LocationPickerProps {
+  // NOTE: `fee` here is a client-side ESTIMATE for display only. The caller
+  // (CheckoutPage) must re-verify the real fee via the calculate-delivery-fee
+  // Edge Function using `lat`/`lng` before charging anything — never trust
+  // this value directly for payment.
   onConfirm: (data: { lat: number; lng: number; address: string; distanceKm: number; fee: number | null }) => void;
 }
 
@@ -87,6 +99,37 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
   const hasRequestedRef = useRef(false);
   const [hasLocated, setHasLocated] = useState(false);
 
+  // Admin-configured factor + tiers, used only for the live drag preview.
+  // Falls back to DEFAULT_DELIVERY_PRICING if the fetch hasn't resolved yet
+  // or fails — this keeps the preview usable even if Supabase is briefly
+  // unreachable. The real fee is always re-verified server-side at checkout.
+  const [pricing, setPricing] = useState<DeliveryPricing>(DEFAULT_DELIVERY_PRICING);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPricing = async () => {
+      const { data, error } = await supabase
+        .from('delivery_pricing')
+        .select('road_distance_factor, tiers')
+        .limit(1)
+        .single();
+
+      if (!cancelled && !error && data) {
+        setPricing({
+          road_distance_factor: Number(data.road_distance_factor),
+          tiers: data.tiers,
+        });
+      }
+      // On error, silently keep DEFAULT_DELIVERY_PRICING — this is only a
+      // preview, so it's fine to show a slightly-stale estimate rather than
+      // blocking the map from being usable.
+    };
+    loadPricing();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Check browser permission state before attempting to access location
   const checkWebPermission = async (): Promise<PermissionState> => {
     if (!navigator.permissions) return 'prompt'; // Fallback if Permissions API unavailable
@@ -143,9 +186,6 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
         setPosition([coords.coords.latitude, coords.coords.longitude]);
         setHasLocated(true);
       } catch (error: any) {
-        // Only treat as "denied" if that's actually what happened. Timeouts
-        // and position-unavailable errors are transient — surface those as
-        // a retryable error instead of the misleading "denied" message.
         if (error?.code === 1) {
           setPermissionDenied(true);
         } else {
@@ -158,30 +198,19 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
     }
 
     // Web: Check actual permission state before attempting to get position.
-    // This ensures users aren't shown "denied" without ever seeing a prompt,
-    // and handles cases where location was previously blocked in browser settings.
     try {
       const permissionState = await checkWebPermission();
 
       if (permissionState === 'denied') {
-        // Location is blocked in browser settings — getCurrentPosition would
-        // fail immediately without showing any prompt, so skip straight to
-        // the manual fallback with a clear message.
         setPermissionDenied(true);
         setLocating(false);
         return;
       }
 
-      // Permission state is either 'prompt' (will show browser dialog) or
-      // 'granted' (already allowed). In both cases, getCurrentPosition will
-      // work or show the appropriate prompt.
       const coords = await getPositionWithFallback();
       setPosition([coords.coords.latitude, coords.coords.longitude]);
       setHasLocated(true);
     } catch (error: any) {
-      // Only treat it as "denied" if the browser explicitly reports that.
-      // Timeouts and position-unavailable errors should not trigger the
-      // "denied" message — they're transient failures the user can retry.
       if (error?.code === 1) {
         setPermissionDenied(true);
       } else {
@@ -192,11 +221,7 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
     }
   };
 
-  // Auto-request only inside the native Android/iOS app. Browsers (the QR-code
-  // web flow) require an explicit tap for the permission prompt to reliably
-  // fire — Safari and recent Chrome versions block or silently ignore
-  // geolocation requests that aren't triggered by a user gesture. Web users
-  // get the "Use my location" button instead.
+  // Auto-request only inside the native Android/iOS app.
   useEffect(() => {
     if (hasRequestedRef.current) return;
     hasRequestedRef.current = true;
@@ -205,12 +230,14 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
     }
   }, []);
 
-  // Recalculate distance/fee whenever pin moves, debounce the geocode call
+  // Recalculate estimated road distance/fee whenever pin moves or pricing
+  // config loads, debounce the geocode call.
   useEffect(() => {
     const [lat, lng] = position;
-    const km = distanceFromLounge(lat, lng);
-    setDistanceKm(km);
-    setFee(calculateDeliveryFee(km));
+    const straightLineKm = distanceFromLounge(lat, lng);
+    const roadKm = estimateRoadDistance(straightLineKm, pricing.road_distance_factor);
+    setDistanceKm(roadKm);
+    setFee(calculateDeliveryFee(roadKm, pricing.tiers));
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
@@ -223,21 +250,15 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [position]);
+  }, [position, pricing]);
 
   const handleConfirm = () => {
+    // fee/distanceKm passed here are ESTIMATES for immediate UI feedback.
+    // CheckoutPage re-verifies the real fee server-side before payment.
     onConfirm({ lat: position[0], lng: position[1], address, distanceKm, fee });
   };
 
   return (
-    // `isolate` pins the Leaflet map (and any high z-index elements inside
-    // it, like the "Use my location" button) into its own stacking context.
-    // Without this, Leaflet's internal panes/controls (z-index up to ~1000)
-    // and the locate button (z-[1000]) compare directly against page-level
-    // elements like modals, and can render on top of them even though the
-    // modal is "later" in the DOM. With `isolate`, only this wrapper's own
-    // z-index (unset/auto here) is compared at the page level, so a modal
-    // with a higher z-index will correctly sit above the whole map.
     <div className="space-y-3 isolate relative z-0">
       {permissionDenied && (
         <div className="text-xs text-muted-foreground bg-secondary/60 rounded-lg px-3 py-2">
@@ -290,7 +311,7 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
 
       <div className="glass-card rounded-lg p-3 space-y-1 text-sm">
         <p className="text-foreground">{geocoding ? 'Finding address…' : address}</p>
-        <p className="text-muted-foreground text-xs">{distanceKm.toFixed(1)} km from Cheers Lounge</p>
+        <p className="text-muted-foreground text-xs">~{distanceKm.toFixed(1)} km by road from Cheers Lounge (estimated)</p>
       </div>
 
       {fee === null ? (
@@ -303,7 +324,7 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
           onClick={handleConfirm}
           className="w-full py-2.5 rounded-lg gold-gradient text-primary-foreground font-medium hover:opacity-90 transition-opacity"
         >
-          Confirm this location — KSh {fee}
+          Confirm this location — est. KSh {fee}
         </button>
       )}
     </div>

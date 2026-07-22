@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, User, LogIn, List } from 'lucide-react';
+import { ArrowLeft, MapPin, User, LogIn, List, AlertTriangle } from 'lucide-react';
 import Header from '@/components/Header';
 import CustomerAuthModal from '@/components/CustomerAuthModal';
 import LocationPicker from '@/components/LocationPicker';
 import { useCart } from '@/context/CartContext';
 import { useCustomer } from '@/context/CustomerContext';
 import { DeliveryLocation } from '@/types';
-import { fetchLocations } from '@/lib/supabase';
+import { fetchLocations, supabase } from '@/lib/supabase';
 
 interface PinLocation {
   lat: number;
   lng: number;
   address: string;
-  distanceKm: number;
-  fee: number;
+  distanceKm: number; // client-side estimate — display only
+  fee: number; // client-side estimate — display only, never charged as-is
 }
 
 const CheckoutPage = () => {
@@ -32,6 +32,10 @@ const CheckoutPage = () => {
   const [useFallback, setUseFallback] = useState(false);
   const [locationId, setLocationId] = useState('');
 
+  // Server-side fee verification state (pin-based flow only)
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
   useEffect(() => {
     if (items.length === 0) navigate('/cart');
 
@@ -45,40 +49,93 @@ const CheckoutPage = () => {
 
   const selectedLocation = locations.find((l) => l.id === locationId);
 
-  const deliveryFee = useFallback
+  // Displayed estimate only — the real charge is decided by the Edge
+  // Function call in handleContinue right before navigating to payment.
+  const deliveryFeeEstimate = useFallback
     ? selectedLocation
       ? Number(selectedLocation.delivery_fee)
       : 0
     : pinLocation?.fee ?? 0;
 
   const safeSubtotal = Number(subtotal) || 0;
-  const total = safeSubtotal + deliveryFee;
+  const totalEstimate = safeSubtotal + deliveryFeeEstimate;
 
   const hasValidDelivery = useFallback ? !!locationId : !!pinLocation;
 
-  const handleContinue = (e: React.FormEvent) => {
+  const handleContinue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone || !hasValidDelivery) return;
 
-    sessionStorage.setItem(
-      'checkout',
-      JSON.stringify({
-        phone,
-        description,
-        total,
-        deliveryFee,
-        customerId: customer?.id ?? null,
-        // Pin-based delivery (primary flow)
-        deliveryLat: useFallback ? null : pinLocation?.lat ?? null,
-        deliveryLng: useFallback ? null : pinLocation?.lng ?? null,
-        deliveryAddress: useFallback ? null : pinLocation?.address ?? null,
-        distanceKm: useFallback ? null : pinLocation?.distanceKm ?? null,
-        // Fallback dropdown flow
-        locationId: useFallback ? locationId : null,
-      })
-    );
+    setVerifyError(null);
 
-    navigate('/payment');
+    // Fallback dropdown flow: fee comes from the admin-managed
+    // DeliveryLocation record already fetched from Supabase, so no extra
+    // verification round-trip is needed here.
+    if (useFallback) {
+      sessionStorage.setItem(
+        'checkout',
+        JSON.stringify({
+          phone,
+          description,
+          total: totalEstimate,
+          deliveryFee: deliveryFeeEstimate,
+          customerId: customer?.id ?? null,
+          deliveryLat: null,
+          deliveryLng: null,
+          deliveryAddress: null,
+          distanceKm: null,
+          locationId,
+        })
+      );
+      navigate('/payment');
+      return;
+    }
+
+    // Pin-based flow: never trust the client-computed fee. Re-derive it
+    // server-side from the raw coordinates via the calculate-delivery-fee
+    // Edge Function, and use ONLY that value going forward.
+    if (!pinLocation) return;
+
+    setVerifying(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('calculate-delivery-fee', {
+        body: { lat: pinLocation.lat, lng: pinLocation.lng },
+      });
+
+      if (error || !data || typeof data.fee !== 'number') {
+        setVerifyError(
+          "Couldn't confirm your delivery fee. Please check your internet connection and try again."
+        );
+        return;
+      }
+
+      const verifiedFee: number = data.fee;
+      const verifiedDistanceKm: number = data.distanceKm ?? pinLocation.distanceKm;
+      const verifiedTotal = safeSubtotal + verifiedFee;
+
+      sessionStorage.setItem(
+        'checkout',
+        JSON.stringify({
+          phone,
+          description,
+          total: verifiedTotal,
+          deliveryFee: verifiedFee, // server-verified — this is what gets charged
+          customerId: customer?.id ?? null,
+          deliveryLat: pinLocation.lat,
+          deliveryLng: pinLocation.lng,
+          deliveryAddress: pinLocation.address,
+          distanceKm: verifiedDistanceKm,
+          locationId: null,
+        })
+      );
+      navigate('/payment');
+    } catch {
+      setVerifyError(
+        "Couldn't confirm your delivery fee. Please check your internet connection and try again."
+      );
+    } finally {
+      setVerifying(false);
+    }
   };
 
   return (
@@ -166,6 +223,7 @@ const CheckoutPage = () => {
                     setUseFallback(true);
                     return;
                   }
+                  setVerifyError(null);
                   setPinLocation({
                     lat: data.lat,
                     lng: data.lng,
@@ -212,7 +270,7 @@ const CheckoutPage = () => {
 
             {pinLocation && !useFallback && (
               <p className="text-xs text-muted-foreground mt-2">
-                Delivering to: {pinLocation.address} ({pinLocation.distanceKm.toFixed(1)} km)
+                Delivering to: {pinLocation.address} (~{pinLocation.distanceKm.toFixed(1)} km)
               </p>
             )}
           </div>
@@ -238,21 +296,33 @@ const CheckoutPage = () => {
               <span>KSh {safeSubtotal.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-muted-foreground">
-              <span>Delivery Fee</span>
-              <span>KSh {deliveryFee.toLocaleString()}</span>
+              <span>Delivery Fee{!useFallback && ' (est.)'}</span>
+              <span>KSh {deliveryFeeEstimate.toLocaleString()}</span>
             </div>
             <div className="border-t border-border pt-2 flex justify-between font-semibold text-foreground text-base">
               <span>Total</span>
-              <span className="gold-text">KSh {total.toLocaleString()}</span>
+              <span className="gold-text">KSh {totalEstimate.toLocaleString()}</span>
             </div>
+            {!useFallback && (
+              <p className="text-xs text-muted-foreground pt-1">
+                Final delivery fee is confirmed on the next step.
+              </p>
+            )}
           </div>
+
+          {verifyError && (
+            <div className="flex items-start gap-2 p-3 rounded-lg border border-destructive/30 bg-destructive/10 text-sm text-destructive">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{verifyError}</span>
+            </div>
+          )}
 
           <button
             type="submit"
-            disabled={!hasValidDelivery}
+            disabled={!hasValidDelivery || verifying}
             className="w-full py-3 rounded-lg gold-gradient text-primary-foreground font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Continue to Payment
+            {verifying ? 'Confirming delivery fee…' : 'Continue to Payment'}
           </button>
         </form>
       </main>
