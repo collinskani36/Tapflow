@@ -30,6 +30,11 @@ interface LocationPickerProps {
   // Edge Function using `lat`/`lng` before charging anything — never trust
   // this value directly for payment.
   onConfirm: (data: { lat: number; lng: number; address: string; distanceKm: number; fee: number | null }) => void;
+  // Optional external position (e.g. a saved location the customer just
+  // selected). When this changes, the pin jumps there and the existing
+  // distance/fee/geocode effect (keyed on `position`) recalculates
+  // automatically — no separate wiring needed for that part.
+  focusPosition?: [number, number] | null;
 }
 
 // Forces Leaflet to recompute its tile grid once the container has its final
@@ -86,7 +91,7 @@ function DraggableMarker({ position, setPosition }: { position: [number, number]
   );
 }
 
-const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
+const LocationPicker = ({ onConfirm, focusPosition }: LocationPickerProps) => {
   const [position, setPosition] = useState<[number, number]>([LOUNGE_COORDS.lat, LOUNGE_COORDS.lng]);
   const [address, setAddress] = useState('');
   const [distanceKm, setDistanceKm] = useState(0);
@@ -98,6 +103,17 @@ const LocationPicker = ({ onConfirm }: LocationPickerProps) => {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const hasRequestedRef = useRef(false);
   const [hasLocated, setHasLocated] = useState(false);
+
+  // When the parent hands us a new focusPosition (e.g. the customer picked
+  // a saved location), jump the pin there. Guarded so it only fires on an
+  // actual change — otherwise every re-render with the same focusPosition
+  // value would re-trigger the position effect below for no reason.
+  useEffect(() => {
+    if (!focusPosition) return;
+    const [lat, lng] = focusPosition;
+    setPosition((prev) => (prev[0] === lat && prev[1] === lng ? prev : [lat, lng]));
+    setHasLocated(true);
+  }, [focusPosition]);
 
   // Admin-configured factor + tiers, used only for the live drag preview.
   // Falls back to DEFAULT_DELIVERY_PRICING if the fetch hasn't resolved yet

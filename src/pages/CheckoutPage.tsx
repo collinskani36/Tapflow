@@ -61,6 +61,13 @@ const CheckoutPage = () => {
   const [saving, setSaving] = useState(false);
   const [saveDone, setSaveDone] = useState(false);
 
+  // Coordinates to hand down to LocationPicker so it can move its marker
+  // when a saved pin is selected. Kept separate from `pinLocation` because
+  // pinLocation also holds the fee/address/distance estimate, which we
+  // don't want to feed back into the map — only the raw lat/lng should
+  // drive where the pin sits.
+  const [focusPosition, setFocusPosition] = useState<[number, number] | null>(null);
+
   useEffect(() => {
     if (items.length === 0) navigate('/cart');
 
@@ -131,6 +138,7 @@ const CheckoutPage = () => {
       setPinSource('saved');
       setShowSavePrompt(false);
       setSaveDone(false);
+      setFocusPosition([saved.delivery_lat, saved.delivery_lng]);
       setPinLocation({
         lat: saved.delivery_lat,
         lng: saved.delivery_lng,
@@ -373,6 +381,7 @@ const CheckoutPage = () => {
                 )}
 
                 <LocationPicker
+                  focusPosition={focusPosition}
                   onConfirm={(data) => {
                     if (data.fee === null) {
                       // Outside delivery range — nudge toward fallback list
