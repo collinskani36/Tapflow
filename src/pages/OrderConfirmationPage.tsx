@@ -6,11 +6,7 @@ import OrderTracker from '@/components/OrderTracker';
 import { supabase } from '@/lib/supabase';
 import { Order } from '@/types';
 
-interface OrderWithRider extends Order {
-  riders?: { id: string; name: string; phone: string } | null;
-  is_received?: boolean;
-  rating?: number | null;
-}
+type OrderWithRider = Order;
 
 // ============================================================
 // STAR RATING WIDGET
@@ -385,6 +381,32 @@ const OrderConfirmationPage = () => {
               </div>
             ))}
           </div>
+
+          {/* Subtotal / delivery fee breakdown. Delivery fee isn't stored as
+              its own column on `orders` — only total_amount is — so it's
+              derived here as total_amount minus the items subtotal. This is
+              exact, since total_amount was computed server-side (in
+              create_order_with_items) as subtotal + delivery_fee. */}
+          {(() => {
+            const itemsSubtotal = (order.order_items ?? []).reduce(
+              (sum, item) => sum + item.price_at_time * item.quantity,
+              0
+            );
+            const deliveryFee = Number(order.total_amount) - itemsSubtotal;
+
+            return (
+              <div className="border-t border-border/50 pt-3 space-y-1.5">
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Subtotal</span>
+                  <span>KSh {itemsSubtotal.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Delivery Fee</span>
+                  <span>KSh {deliveryFee.toLocaleString()}</span>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="border-t border-border pt-3 flex justify-between font-semibold">
             <span>Total</span>

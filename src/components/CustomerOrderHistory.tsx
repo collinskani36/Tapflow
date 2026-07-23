@@ -2,24 +2,8 @@ import { useEffect, useState } from 'react';
 import { Package, Clock, CheckCircle, XCircle, Truck, Star } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useCustomer } from '@/context/CustomerContext';
-
-interface OrderItem {
-  id: string;
-  quantity: number;
-  price_at_time: number;
-  products: { name: string } | null;
-}
-
-interface Order {
-  id: string;
-  created_at: string;
-  status: string;
-  total_amount: number;
-  transaction_code: string;
-  rating: number | null;
-  delivery_locations: { name: string } | null;
-  order_items: OrderItem[];
-}
+import { Order } from '@/types';
+import OrderDetailModal from '@/components/OrderDetailModal';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   pending_verification: { label: 'Pending', color: 'text-yellow-400', icon: <Clock className="w-3.5 h-3.5" /> },
@@ -35,6 +19,7 @@ const CustomerOrderHistory = () => {
   const { customer } = useCustomer();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!customer) return;
@@ -80,59 +65,72 @@ const CustomerOrderHistory = () => {
   }
 
   return (
-    <div className="space-y-3">
-      {orders.map((order) => {
-        const cfg = STATUS_CONFIG[order.status] ?? { label: order.status, color: 'text-muted-foreground', icon: null };
-        const date = new Date(order.created_at).toLocaleDateString('en-KE', {
-          day: 'numeric', month: 'short', year: 'numeric',
-        });
+    <>
+      <div className="space-y-3">
+        {orders.map((order) => {
+          const cfg = STATUS_CONFIG[order.status] ?? { label: order.status, color: 'text-muted-foreground', icon: null };
+          const date = new Date(order.created_at).toLocaleDateString('en-KE', {
+            day: 'numeric', month: 'short', year: 'numeric',
+          });
 
-        return (
-          <div key={order.id} className="glass-card rounded-xl p-4 space-y-3">
-            {/* Top row */}
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-xs text-muted-foreground">{date}</p>
-                <p className="text-sm font-medium text-foreground mt-0.5">
-                  {order.delivery_locations?.name ?? 'Unknown location'}
-                </p>
-              </div>
-              <span className={`flex items-center gap-1 text-xs font-medium ${cfg.color}`}>
-                {cfg.icon} {cfg.label}
-              </span>
-            </div>
-
-            {/* Items */}
-            <div className="space-y-1">
-              {order.order_items.map((item) => (
-                <div key={item.id} className="flex justify-between text-xs text-muted-foreground">
-                  <span>{item.products?.name ?? 'Item'} × {item.quantity}</span>
-                  <span>KSh {(item.price_at_time * item.quantity).toLocaleString()}</span>
+          return (
+            <button
+              key={order.id}
+              type="button"
+              onClick={() => setSelectedOrderId(order.id)}
+              className="w-full text-left glass-card rounded-xl p-4 space-y-3 hover:border-primary/40 border border-transparent transition-colors"
+            >
+              {/* Top row */}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">{date}</p>
+                  <p className="text-sm font-medium text-foreground mt-0.5">
+                    {order.delivery_locations?.name ?? 'Unknown location'}
+                  </p>
                 </div>
-              ))}
-            </div>
-
-            {/* Bottom row */}
-            <div className="flex items-center justify-between border-t border-border/30 pt-2">
-              <div>
-                <span className="text-xs text-muted-foreground">M-Pesa: </span>
-                <span className="text-xs font-mono text-foreground">{order.transaction_code}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {order.rating && (
-                  <span className="flex items-center gap-0.5 text-xs text-yellow-400">
-                    <Star className="w-3 h-3 fill-yellow-400" /> {order.rating}
-                  </span>
-                )}
-                <span className="text-sm font-semibold gold-text">
-                  KSh {Number(order.total_amount).toLocaleString()}
+                <span className={`flex items-center gap-1 text-xs font-medium ${cfg.color}`}>
+                  {cfg.icon} {cfg.label}
                 </span>
               </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
+
+              {/* Items */}
+              <div className="space-y-1">
+                {(order.order_items ?? []).map((item) => (
+                  <div key={item.id} className="flex justify-between text-xs text-muted-foreground">
+                    <span>{item.products?.name ?? 'Item'} × {item.quantity}</span>
+                    <span>KSh {(item.price_at_time * item.quantity).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Bottom row */}
+              <div className="flex items-center justify-between border-t border-border/30 pt-2">
+                <div>
+                  <span className="text-xs text-muted-foreground">M-Pesa: </span>
+                  <span className="text-xs font-mono text-foreground">{order.transaction_code}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {order.rating && (
+                    <span className="flex items-center gap-0.5 text-xs text-yellow-400">
+                      <Star className="w-3 h-3 fill-yellow-400" /> {order.rating}
+                    </span>
+                  )}
+                  <span className="text-sm font-semibold gold-text">
+                    KSh {Number(order.total_amount).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <OrderDetailModal
+        orderId={selectedOrderId}
+        open={selectedOrderId !== null}
+        onClose={() => setSelectedOrderId(null)}
+      />
+    </>
   );
 };
 

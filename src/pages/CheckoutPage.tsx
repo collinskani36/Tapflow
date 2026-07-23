@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, User, LogIn, List, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, MapPin, User, LogIn, List, AlertTriangle, Bookmark, Check, Loader2 } from 'lucide-react';
 import Header from '@/components/Header';
 import CustomerAuthModal from '@/components/CustomerAuthModal';
 import LocationPicker from '@/components/LocationPicker';
@@ -17,6 +17,17 @@ interface PinLocation {
   fee: number; // client-side estimate — display only, never charged as-is
 }
 
+interface SavedLocation {
+  id: string;
+  label: string | null;
+  location_id: string | null;
+  location_description: string | null;
+  delivery_lat: number | null;
+  delivery_lng: number | null;
+  delivery_address: string | null;
+  delivery_locations: { name: string; delivery_fee: number } | null;
+}
+
 const CheckoutPage = () => {
   const { items, subtotal } = useCart();
   const { customer } = useCustomer();
@@ -29,12 +40,26 @@ const CheckoutPage = () => {
 
   // New pin-based flow
   const [pinLocation, setPinLocation] = useState<PinLocation | null>(null);
+  // Tracks whether the current pin came from a fresh drop on the map, or
+  // from selecting an existing saved location — only offer to save it
+  // again if it's fresh, to avoid duplicate saves of the same spot.
+  const [pinSource, setPinSource] = useState<'fresh' | 'saved'>('fresh');
   const [useFallback, setUseFallback] = useState(false);
   const [locationId, setLocationId] = useState('');
 
   // Server-side fee verification state (pin-based flow only)
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // ── Saved locations (customer_saved_locations) ──
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
+  const [selectingSavedId, setSelectingSavedId] = useState<string | null>(null);
+
+  // ── Save-this-pin prompt ──
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [saveLabel, setSaveLabel] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveDone, setSaveDone] = useState(false);
 
   useEffect(() => {
     if (items.length === 0) navigate('/cart');
@@ -46,6 +71,27 @@ const CheckoutPage = () => {
 
     loadLocations();
   }, [items, navigate]);
+
+  useEffect(() => {
+    if (!customer) {
+      setSavedLocations([]);
+      return;
+    }
+    const loadSaved = async () => {
+      const { data, error } = await supabase
+        .from('customer_saved_locations')
+        .select(
+          'id, label, location_id, location_description, delivery_lat, delivery_lng, delivery_address, delivery_locations ( name, delivery_fee )'
+        )
+        .eq('customer_id', customer.id)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setSavedLocations(data as unknown as SavedLocation[]);
+      }
+    };
+    loadSaved();
+  }, [customer]);
 
   const selectedLocation = locations.find((l) => l.id === locationId);
 
@@ -61,6 +107,80 @@ const CheckoutPage = () => {
   const totalEstimate = safeSubtotal + deliveryFeeEstimate;
 
   const hasValidDelivery = useFallback ? !!locationId : !!pinLocation;
+
+  // Selecting a saved PIN location: coordinates are stable, but the fee
+  // isn't — pricing config can change between visits — so this re-runs
+  // the same server verification a fresh pin drop would, rather than
+  // trusting any fee that might once have been shown for this spot.
+  const handleSelectSavedPin = async (saved: SavedLocation) => {
+    if (saved.delivery_lat == null || saved.delivery_lng == null) return;
+    setSelectingSavedId(saved.id);
+    setVerifyError(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('calculate-delivery-fee', {
+        body: { lat: saved.delivery_lat, lng: saved.delivery_lng },
+      });
+
+      if (error || !data || typeof data.fee !== 'number') {
+        setVerifyError("Couldn't verify that saved location right now. Please try again.");
+        return;
+      }
+
+      setUseFallback(false);
+      setPinSource('saved');
+      setShowSavePrompt(false);
+      setSaveDone(false);
+      setPinLocation({
+        lat: saved.delivery_lat,
+        lng: saved.delivery_lng,
+        address: saved.delivery_address ?? `${saved.delivery_lat.toFixed(5)}, ${saved.delivery_lng.toFixed(5)}`,
+        distanceKm: data.distanceKm,
+        fee: data.fee,
+      });
+      if (saved.location_description) setDescription(saved.location_description);
+    } catch {
+      setVerifyError("Couldn't verify that saved location right now. Please try again.");
+    } finally {
+      setSelectingSavedId(null);
+    }
+  };
+
+  const handleSelectSavedZone = (saved: SavedLocation) => {
+    if (!saved.location_id) return;
+    setUseFallback(true);
+    setLocationId(saved.location_id);
+    if (saved.location_description) setDescription(saved.location_description);
+  };
+
+  const handleSaveCurrentPin = async () => {
+    if (!customer || !pinLocation) return;
+    setSaving(true);
+
+    const { data, error } = await supabase
+      .from('customer_saved_locations')
+      .insert({
+        customer_id: customer.id,
+        label: saveLabel.trim() || null,
+        location_id: null,
+        location_description: description.trim() || null,
+        delivery_lat: pinLocation.lat,
+        delivery_lng: pinLocation.lng,
+        delivery_address: pinLocation.address,
+      })
+      .select(
+        'id, label, location_id, location_description, delivery_lat, delivery_lng, delivery_address, delivery_locations ( name, delivery_fee )'
+      )
+      .single();
+
+    if (!error && data) {
+      setSavedLocations((prev) => [data as unknown as SavedLocation, ...prev]);
+      setSaveDone(true);
+      setShowSavePrompt(false);
+      setSaveLabel('');
+    }
+    setSaving(false);
+  };
 
   const handleContinue = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,24 +335,65 @@ const CheckoutPage = () => {
             </div>
 
             {!useFallback ? (
-              <LocationPicker
-                onConfirm={(data) => {
-                  if (data.fee === null) {
-                    // Outside delivery range — nudge toward fallback list
-                    setPinLocation(null);
-                    setUseFallback(true);
-                    return;
-                  }
-                  setVerifyError(null);
-                  setPinLocation({
-                    lat: data.lat,
-                    lng: data.lng,
-                    address: data.address,
-                    distanceKm: data.distanceKm,
-                    fee: data.fee,
-                  });
-                }}
-              />
+              <div className="space-y-3">
+                {customer && savedLocations.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Bookmark className="w-3 h-3" /> Saved locations
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {savedLocations.map((saved) => {
+                        const isPin = saved.delivery_lat != null;
+                        const name = isPin
+                          ? saved.label || saved.delivery_address || 'Saved pin'
+                          : saved.label || saved.delivery_locations?.name || 'Saved zone';
+                        const isSelecting = selectingSavedId === saved.id;
+
+                        return (
+                          <button
+                            key={saved.id}
+                            type="button"
+                            disabled={isSelecting}
+                            onClick={() =>
+                              isPin ? handleSelectSavedPin(saved) : handleSelectSavedZone(saved)
+                            }
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border text-xs text-foreground hover:border-primary/40 hover:bg-secondary/40 transition-colors disabled:opacity-60"
+                          >
+                            {isSelecting ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <MapPin className="w-3 h-3 text-primary" />
+                            )}
+                            {name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <LocationPicker
+                  onConfirm={(data) => {
+                    if (data.fee === null) {
+                      // Outside delivery range — nudge toward fallback list
+                      setPinLocation(null);
+                      setUseFallback(true);
+                      return;
+                    }
+                    setVerifyError(null);
+                    setPinSource('fresh');
+                    setShowSavePrompt(false);
+                    setSaveDone(false);
+                    setPinLocation({
+                      lat: data.lat,
+                      lng: data.lng,
+                      address: data.address,
+                      distanceKm: data.distanceKm,
+                      fee: data.fee,
+                    });
+                  }}
+                />
+              </div>
             ) : (
               <div className="space-y-2">
                 {locations.length === 0 ? (
@@ -269,9 +430,63 @@ const CheckoutPage = () => {
             )}
 
             {pinLocation && !useFallback && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Delivering to: {pinLocation.address} (~{pinLocation.distanceKm.toFixed(1)} km)
-              </p>
+              <div className="mt-2 space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Delivering to: {pinLocation.address} (~{pinLocation.distanceKm.toFixed(1)} km)
+                </p>
+
+                {/* Save-this-pin prompt — only for logged-in customers, only
+                    for a freshly-dropped pin (not one already selected from
+                    saved locations), and only until they've saved or
+                    dismissed it. */}
+                {customer && pinSource === 'fresh' && !saveDone && (
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    {!showSavePrompt ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowSavePrompt(true)}
+                        className="flex items-center gap-1.5 text-xs text-primary hover:opacity-80"
+                      >
+                        <Bookmark className="w-3.5 h-3.5" /> Save this location for next time
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Label (optional) — e.g. Home, Work"
+                          value={saveLabel}
+                          onChange={(e) => setSaveLabel(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowSavePrompt(false)}
+                            className="flex-1 py-1.5 rounded-lg border border-border text-muted-foreground text-xs hover:bg-secondary transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveCurrentPin}
+                            disabled={saving}
+                            className="flex-1 py-1.5 rounded-lg gold-gradient text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-1.5"
+                          >
+                            {saving && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {saveDone && (
+                  <p className="flex items-center gap-1.5 text-xs text-primary">
+                    <Check className="w-3.5 h-3.5" /> Saved to your locations
+                  </p>
+                )}
+              </div>
             )}
           </div>
 

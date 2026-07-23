@@ -10,6 +10,9 @@ interface SavedLocation {
   label: string | null;
   location_id: string | null;
   location_description: string | null;
+  delivery_lat: number | null;
+  delivery_lng: number | null;
+  delivery_address: string | null;
   delivery_locations: { name: string; delivery_fee: number } | null;
 }
 
@@ -32,7 +35,7 @@ const CustomerSavedLocations = () => {
       const [{ data: savedData }, locData] = await Promise.all([
         supabase
           .from('customer_saved_locations')
-          .select('id, label, location_id, location_description, delivery_locations ( name, delivery_fee )')
+          .select('id, label, location_id, location_description, delivery_lat, delivery_lng, delivery_address, delivery_locations ( name, delivery_fee )')
           .eq('customer_id', customer.id)
           .order('created_at', { ascending: false }),
         fetchLocations(),
@@ -94,35 +97,44 @@ const CustomerSavedLocations = () => {
         </div>
       )}
 
-      {saved.map((loc) => (
-        <div key={loc.id} className="glass-card rounded-xl p-4 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <MapPin className="w-4 h-4 text-primary mt-0.5 shrink-0" />
-            <div>
-              {loc.label && (
-                <p className="text-xs font-medium text-primary mb-0.5">{loc.label}</p>
-              )}
-              <p className="text-sm text-foreground">
-                {loc.delivery_locations?.name ?? '—'}
-              </p>
-              {loc.location_description && (
-                <p className="text-xs text-muted-foreground mt-0.5">{loc.location_description}</p>
-              )}
-              {loc.delivery_locations?.delivery_fee != null && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Delivery: KSh {Number(loc.delivery_locations.delivery_fee).toLocaleString()}
+      {saved.map((loc) => {
+        const isPin = loc.delivery_lat != null;
+        return (
+          <div key={loc.id} className="glass-card rounded-xl p-4 flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <MapPin className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+              <div>
+                {loc.label && (
+                  <p className="text-xs font-medium text-primary mb-0.5">{loc.label}</p>
+                )}
+                <p className="text-sm text-foreground">
+                  {isPin ? loc.delivery_address ?? '—' : loc.delivery_locations?.name ?? '—'}
                 </p>
-              )}
+                {loc.location_description && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{loc.location_description}</p>
+                )}
+                {isPin ? (
+                  <p className="text-xs text-muted-foreground/70 mt-0.5">
+                    Delivery fee is calculated fresh at checkout
+                  </p>
+                ) : (
+                  loc.delivery_locations?.delivery_fee != null && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Delivery: KSh {Number(loc.delivery_locations.delivery_fee).toLocaleString()}
+                    </p>
+                  )
+                )}
+              </div>
             </div>
+            <button
+              onClick={() => handleDelete(loc.id)}
+              className="p-1.5 rounded-full hover:bg-secondary text-muted-foreground hover:text-red-400 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <button
-            onClick={() => handleDelete(loc.id)}
-            className="p-1.5 rounded-full hover:bg-secondary text-muted-foreground hover:text-red-400 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
+        );
+      })}
 
       {adding ? (
         <div className="glass-card rounded-xl p-4 space-y-3 border border-primary/20">
