@@ -94,9 +94,28 @@ export const useRiderNotifications = () => {
           
           const order = payload.new as any;
           const oldOrder = payload.old as any;
-          
-          // Status change → "Order Out for Delivery / Delivered / Completed"
-          if (
+
+          // Rider assignment happens via UPDATE (rider_id gets set, and
+          // status flips to 'out_for_delivery' in the SAME write) — not via
+          // INSERT, since orders are created unassigned. This must be
+          // checked BEFORE the generic status-change branch below, or the
+          // simultaneous status flip fires "Order Out for Delivery" instead
+          // of the actual assignment notification.
+          const wasJustAssignedToMe =
+            order.rider_id != null &&
+            order.rider_id === riderProfile.id &&
+            oldOrder.rider_id !== order.rider_id;
+
+          if (wasJustAssignedToMe) {
+            if (!isDuplicate(`${order.id}:assigned`)) {
+              const location = order.location_description || order.delivery_address || 'Unknown location';
+              notifyNewOrderAssigned(order.id, order.phone_number, location);
+            }
+            // Don't also fire the generic status notification for this same
+            // write — being assigned already tells the rider what they need
+            // to know; a redundant "Out for Delivery" toast right after adds
+            // noise, not information.
+          } else if (
             order.status !== oldOrder.status &&
             ['out_for_delivery', 'delivered', 'completed'].includes(order.status) &&
             !isDuplicate(`${order.id}:status`)
@@ -105,8 +124,8 @@ export const useRiderNotifications = () => {
           }
 
           // Rating change → "You got a X-star rating!" — independent of
-          // status, since a customer can rate at any point after receiving
-          // their order, separately from whatever status transition happened.
+          // status/assignment, since a customer can rate at any point after
+          // receiving their order.
           if (
             order.rating != null &&
             order.rating !== oldOrder.rating &&
