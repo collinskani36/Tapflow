@@ -5,17 +5,27 @@ import { useAuth } from '@/context/AuthContext';
 import { 
   requestNotificationPermission, 
   notifyNewOrderAssigned,
-  notifyOrderUpdated 
+  notifyOrderUpdated,
+  notifyRatingReceived,
 } from '@/lib/notifications';
 
 export const useRiderNotifications = () => {
   const { riderProfile, isRider } = useAuth();
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [lastNotification, setLastNotification] = useState<{
-    orderId: string;
-    timestamp: number;
-  } | null>(null);
+  // Keyed by `${orderId}:${kind}` (e.g. "abc123:assigned", "abc123:status",
+  // "abc123:rating") so a status-change notification and a rating
+  // notification for the SAME order within the same few seconds don't
+  // suppress each other — only true duplicates of the same kind do.
+  const lastNotificationRef = useRef<Map<string, number>>(new Map());
   const subscriptionRef = useRef<any>(null);
+
+  const isDuplicate = (key: string, windowMs = 5000): boolean => {
+    const now = Date.now();
+    const last = lastNotificationRef.current.get(key);
+    if (last && now - last < windowMs) return true;
+    lastNotificationRef.current.set(key, now);
+    return false;
+  };
 
   // Request permission when rider logs in
   useEffect(() => {
@@ -61,20 +71,14 @@ export const useRiderNotifications = () => {
           // Get the new order data
           const order = payload.new as any;
           
-          // Prevent duplicate notifications for the same order (within 5 seconds)
-          const now = Date.now();
-          if (lastNotification?.orderId === order.id && 
-              now - lastNotification.timestamp < 5000) {
-            console.log('⏭️ Skipping duplicate notification');
+          if (isDuplicate(`${order.id}:assigned`)) {
+            console.log('⏭️ Skipping duplicate assignment notification');
             return;
           }
           
-          // Send notification
+          // Send notification — phone + location only, no other order details
           const location = order.location_description || order.delivery_address || 'Unknown location';
           notifyNewOrderAssigned(order.id, order.phone_number, location);
-          
-          // Update last notification
-          setLastNotification({ orderId: order.id, timestamp: now });
         }
       )
       .on(
@@ -86,26 +90,29 @@ export const useRiderNotifications = () => {
           filter: `rider_id=eq.${riderProfile.id}`,
         },
         (payload) => {
-          console.log('🔄 Order status updated:', payload);
+          console.log('🔄 Order updated:', payload);
           
           const order = payload.new as any;
           const oldOrder = payload.old as any;
           
-          // Only notify if status changed
-          if (order.status !== oldOrder.status) {
-            // Prevent duplicate notifications
-            const now = Date.now();
-            if (lastNotification?.orderId === order.id && 
-                now - lastNotification.timestamp < 5000) {
-              console.log('⏭️ Skipping duplicate notification');
-              return;
-            }
-            
-            // Only notify for certain status changes
-            if (['out_for_delivery', 'delivered', 'completed'].includes(order.status)) {
-              notifyOrderUpdated(order.id, order.status);
-              setLastNotification({ orderId: order.id, timestamp: now });
-            }
+          // Status change → "Order Out for Delivery / Delivered / Completed"
+          if (
+            order.status !== oldOrder.status &&
+            ['out_for_delivery', 'delivered', 'completed'].includes(order.status) &&
+            !isDuplicate(`${order.id}:status`)
+          ) {
+            notifyOrderUpdated(order.id, order.status);
+          }
+
+          // Rating change → "You got a X-star rating!" — independent of
+          // status, since a customer can rate at any point after receiving
+          // their order, separately from whatever status transition happened.
+          if (
+            order.rating != null &&
+            order.rating !== oldOrder.rating &&
+            !isDuplicate(`${order.id}:rating`)
+          ) {
+            notifyRatingReceived(order.id, order.rating);
           }
         }
       )
@@ -121,7 +128,7 @@ export const useRiderNotifications = () => {
         subscriptionRef.current.unsubscribe();
       }
     };
-  }, [isRider, riderProfile, permissionGranted, lastNotification]);
+  }, [isRider, riderProfile, permissionGranted]);
 
   return {
     permissionGranted,

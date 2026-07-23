@@ -28,7 +28,12 @@ export const sendBrowserNotification = (
     badge?: string;
     tag?: string;
     data?: any;
-    actions?: NotificationAction[];
+    // Defined locally rather than referencing any global DOM Notification
+    // type — both NotificationAction and NotificationOptions['actions']
+    // turned out to be inconsistently available depending on TS/lib.dom.d.ts
+    // version in this project. This matches the real Notification API
+    // shape ({ action, title, icon? }) without depending on it resolving.
+    actions?: { action: string; title: string; icon?: string }[];
     requireInteraction?: boolean;
     silent?: boolean;
   }
@@ -74,14 +79,17 @@ export const sendBrowserNotification = (
   }
 };
 
-// Helper function for order assignment notifications
+// Helper function for order assignment notifications.
+// Deliberately carries ONLY the customer's phone (so the rider can call
+// them) and the delivery location — no other order details (items, price,
+// transaction code, etc.) are included.
 export const notifyNewOrderAssigned = (
   orderId: string,
   customerPhone: string,
   location: string
 ) => {
-  const title = '🚚 New Delivery Assigned!';
-  const body = `Customer: ${customerPhone}\nLocation: ${location}\nTap to view order details`;
+  const title = '🚚 You’ve been assigned an order';
+  const body = `Call: ${customerPhone}\nLocation: ${location}`;
 
   return sendBrowserNotification(title, {
     body,
@@ -114,6 +122,24 @@ export const notifyOrderUpdated = (
   return sendBrowserNotification(title, {
     body,
     tag: `order-${orderId}`,
+    data: {
+      url: `/rider/dashboard`,
+      orderId,
+    },
+  });
+};
+
+// Helper for when a customer rates a completed delivery. Separate from
+// notifyOrderUpdated (different tag) so a status-change notification and a
+// rating notification for the same order don't overwrite/dedupe each other.
+export const notifyRatingReceived = (orderId: string, rating: number) => {
+  const stars = '⭐'.repeat(Math.max(1, Math.min(5, rating)));
+  const title = `${stars} You got a ${rating}-star rating!`;
+  const body = `A customer rated their delivery ${rating} star${rating === 1 ? '' : 's'}.`;
+
+  return sendBrowserNotification(title, {
+    body,
+    tag: `order-${orderId}-rating`,
     data: {
       url: `/rider/dashboard`,
       orderId,
