@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.myliqour.com',
-  appName: 'Complex Liquors',
+  appName: 'Cheers Lounge',
   webDir: 'dist',
 
   server: {
