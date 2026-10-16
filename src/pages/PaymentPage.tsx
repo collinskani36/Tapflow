@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Smartphone, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Smartphone, CheckCircle2, XCircle, Loader2, Copy, Check } from 'lucide-react';
 import Header from '@/components/Header';
 import { useCart } from '@/context/CartContext';
 import { createOrder, supabase } from '@/lib/supabase';
@@ -9,6 +9,7 @@ type PaymentStatus = 'idle' | 'initiating' | 'waiting' | 'submitting' | 'success
 
 const POLL_INTERVAL_MS = 2500;
 const TIMEOUT_MS = 90_000; // matches typical STK prompt expiry
+const DEMO_TILL = '234567'; // TODO: replace with real Till/Paybill before production
 
 const PaymentPage = () => {
   const navigate = useNavigate();
@@ -17,6 +18,11 @@ const PaymentPage = () => {
   const [status, setStatus] = useState<PaymentStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [txId, setTxId] = useState<string | null>(null);
+
+  // Manual payment (customer paid via Till without using the STK prompt)
+  const [showManual, setShowManual] = useState(false);
+  const [manualCode, setManualCode] = useState('');
+  const [copied, setCopied] = useState(false);
 
   const pollRef = useRef<number | null>(null);
   const timeoutRef = useRef<number | null>(null);
@@ -127,6 +133,23 @@ const PaymentPage = () => {
     startPolling(data.id);
   };
 
+  const handleCopyTill = async () => {
+    try {
+      await navigator.clipboard.writeText(DEMO_TILL);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable — user can still read the number
+    }
+  };
+
+  const manualCodeValid = /^[A-Z0-9]{10}$/.test(manualCode);
+
+  const handleManualConfirm = () => {
+    if (!manualCodeValid) return;
+    finalizeOrder(manualCode);
+  };
+
   const handleRetry = () => {
     clearTimers();
     setTxId(null);
@@ -180,6 +203,53 @@ const PaymentPage = () => {
             >
               Pay KSh {total.toLocaleString()}
             </button>
+          )}
+
+          {/* Manual payment option */}
+          {status === 'idle' && (
+            <div className="space-y-3">
+              {!showManual ? (
+                <button
+                  onClick={() => setShowManual(true)}
+                  className="w-full text-sm text-muted-foreground underline hover:text-foreground"
+                >
+                  Paid manually? Enter M-Pesa code
+                </button>
+              ) : (
+                <div className="bg-secondary rounded-lg p-4 space-y-3">
+                  <p className="text-sm text-muted-foreground text-center">
+                    Pay KSh {total.toLocaleString()} to Till
+                  </p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold tracking-widest text-foreground">
+                      {DEMO_TILL}
+                    </span>
+                    <button
+                      onClick={handleCopyTill}
+                      aria-label="Copy till number"
+                      className="p-1.5 rounded-md hover:bg-background text-muted-foreground"
+                    >
+                      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <input
+                    value={manualCode}
+                    onChange={(e) =>
+                      setManualCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))
+                    }
+                    placeholder="M-Pesa code e.g. SJK4X9ABCD"
+                    className="w-full px-3 py-2 rounded-lg bg-background border border-primary/10 text-center tracking-widest uppercase"
+                  />
+                  <button
+                    onClick={handleManualConfirm}
+                    disabled={!manualCodeValid}
+                    className="w-full py-3 rounded-lg gold-gradient text-primary-foreground font-medium disabled:opacity-40"
+                  >
+                    Confirm order
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Initiating STK push */}
