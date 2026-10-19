@@ -131,7 +131,8 @@ export async function createOrder(data: {
   items: {
     product_id: string;
     quantity: number;
-    variant_price?: number | null; // ← actual price customer selected
+    size?: string | null; // which variant was chosen; the server looks the price up
+    variant_price?: number | null; // legacy: only used to identify the chosen variant, never as a price
   }[];
 }): Promise<Order> {
   const { data: orderId, error } = await supabase.rpc(
@@ -155,20 +156,15 @@ export async function createOrder(data: {
     throw error;
   }
 
-  const { data: order, error: fetchError } = await supabase
-    .from('orders')
-    .select(`
-      *,
-      order_items (*, products (*)),
-      delivery_locations (*),
-      riders (id, name, phone)
-    `)
-    .eq('id', orderId)
-    .single();
+  // Customers can't read the orders table directly; load it through the tracking function.
+  const { data: order, error: fetchError } = await supabase.rpc('get_order_tracking', {
+    p_order_id: orderId,
+  });
 
   if (fetchError) throw fetchError;
+  if (!order) throw new Error('Order was created but could not be loaded');
 
-  return order;
+  return order as Order;
 }
 
 export async function fetchOrders(): Promise<Order[]> {
@@ -205,16 +201,4 @@ export async function markOrderRead(id: string): Promise<void> {
     .eq('id', id);
 
   if (error) throw error;
-}
-
-// ============================================================
-// AUTH
-// ============================================================
-
-export async function adminLogin(email: string, password: string): Promise<boolean> {
-  return email === 'admin@Landmark.co.ke' && password === 'admin123';
-}
-
-export async function adminLogout(): Promise<void> {
-  // later replace with supabase.auth.signOut()
 }

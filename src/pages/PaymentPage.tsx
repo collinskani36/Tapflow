@@ -1,23 +1,78 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Smartphone, CheckCircle2, XCircle, Loader2, Copy, Check } from 'lucide-react';
+import {
+  ArrowLeft,
+  Smartphone,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Copy,
+  Check,
+  AlertTriangle,
+} from 'lucide-react';
 import Header from '@/components/Header';
 import { useCart } from '@/context/CartContext';
 import { createOrder, supabase } from '@/lib/supabase';
 
-type PaymentStatus = 'idle' | 'initiating' | 'waiting' | 'submitting' | 'success' | 'failed';
+type PaymentStatus =
+  | 'idle'
+  | 'initiating'
+  | 'waiting' // STK prompt sent, waiting for the customer
+  | 'delayed' // still waiting past the normal window (we keep checking)
+  | 'submitting' // paid, order being created
+  | 'review' // paid but needs manual verification (e.g. wrong amount)
+  | 'success'
+  | 'failed';
 
 const POLL_INTERVAL_MS = 2500;
-const TIMEOUT_MS = 90_000; // matches typical STK prompt expiry
-const DEMO_TILL = '234567'; // TODO: replace with real Till/Paybill before production
+const DELAYED_AFTER_MS = 90_000; // show the "still waiting" message, keep polling
+const GIVE_UP_AFTER_MS = 15 * 60_000; // stop polling; payment may still be reconciled server-side
+const PENDING_KEY = 'pendingPayment';
+
+// Manual Till-code entry. Temporary: used for demos until live STK prompting is on.
+// Set VITE_ENABLE_MANUAL_PAYMENT=false to hide it.
+const MANUAL_ENABLED = import.meta.env.VITE_ENABLE_MANUAL_PAYMENT !== 'false';
+const DEMO_TILL = '234567'; // TODO: replace with the real Till before production
+
+// The edge function returns user-safe messages as { error } on 4xx/5xx; supabase-js
+// hides the body inside error.context, so read it from there.
+async function readFunctionError(error: unknown): Promise<string | null> {
+  const ctx = (error as { context?: Response } | null)?.context;
+  if (ctx && typeof ctx.clone === 'function') {
+    try {
+      const body = await ctx.clone().json();
+      if (typeof body?.error === 'string') return body.error;
+    } catch {
+      /* not JSON */
+    }
+  }
+  return null;
+}
+
+// Daraja failure texts are technical; show something a customer can act on.
+function friendlyFailure(reason?: string | null): string {
+  const r = reason ?? '';
+  if (/cancel/i.test(r)) return 'You cancelled the payment request.';
+  if (/insufficient|balance/i.test(r)) return 'Your M-Pesa balance is too low for this order.';
+  if (/pin/i.test(r)) return 'The M-Pesa PIN was incorrect.';
+  if (/timeout|timed out|unreachable|not responded/i.test(r)) {
+    return 'The request timed out before it was completed. Please try again.';
+  }
+  return 'The payment was not completed. You have not been charged.';
+}
 
 const PaymentPage = () => {
   const navigate = useNavigate();
   const { items, subtotal, clearCart } = useCart();
 
+  const checkout = JSON.parse(sessionStorage.getItem('checkout') || '{}');
+  const estimatedTotal = Number(checkout.total ?? subtotal) || 0;
+  const phone = checkout.phone as string | undefined;
+
   const [status, setStatus] = useState<PaymentStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
-  const [txId, setTxId] = useState<string | null>(null);
+  const [amount, setAmount] = useState(estimatedTotal); // replaced by the server's figure after initiate
+  const [receipt, setReceipt] = useState<string | null>(null);
 
   // Manual payment (customer paid via Till without using the STK prompt)
   const [showManual, setShowManual] = useState(false);
@@ -25,29 +80,164 @@ const PaymentPage = () => {
   const [copied, setCopied] = useState(false);
 
   const pollRef = useRef<number | null>(null);
-  const timeoutRef = useRef<number | null>(null);
+  const inFlightRef = useRef(false);
+  const payLockRef = useRef(false);
 
-  const checkout = JSON.parse(sessionStorage.getItem('checkout') || '{}');
-  const total = Number(checkout.total ?? subtotal) || 0;
-  const phone = checkout.phone as string | undefined;
-
-  const clearTimers = () => {
+  const stopPolling = () => {
     if (pollRef.current) window.clearInterval(pollRef.current);
-    if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
     pollRef.current = null;
-    timeoutRef.current = null;
   };
 
-  useEffect(() => clearTimers, []);
+  useEffect(() => stopPolling, []);
 
-  const finalizeOrder = async (mpesaReceipt: string) => {
+  // ── Resume a payment that was in progress when the page was reloaded ──
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PENDING_KEY);
+      if (!raw) return;
+      const pending = JSON.parse(raw) as { id: string; startedAt: number; amount: number };
+      if (!pending?.id || Date.now() - pending.startedAt > GIVE_UP_AFTER_MS) {
+        localStorage.removeItem(PENDING_KEY);
+        return;
+      }
+      payLockRef.current = true;
+      setAmount(Number(pending.amount) || estimatedTotal);
+      setStatus('waiting');
+      startPolling(pending.id, pending.startedAt);
+    } catch {
+      localStorage.removeItem(PENDING_KEY);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Success: the server already created the order. Just go to it. ──
+  const finishSuccess = (orderId: string) => {
+    stopPolling();
+    localStorage.removeItem(PENDING_KEY);
+    sessionStorage.setItem('lastOrder', JSON.stringify({ id: orderId }));
+    sessionStorage.removeItem('checkout');
+    clearCart();
+    setStatus('success');
+    navigate('/order-confirmation');
+  };
+
+  const fail = (message: string) => {
+    stopPolling();
+    localStorage.removeItem(PENDING_KEY);
+    payLockRef.current = false;
+    setStatus('failed');
+    setErrorMessage(message);
+  };
+
+  const startPolling = (id: string, startedAt: number) => {
+    stopPolling();
+
+    const tick = async () => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        const elapsed = Date.now() - startedAt;
+
+        if (elapsed > GIVE_UP_AFTER_MS) {
+          fail(
+            "We couldn't confirm your payment. If M-Pesa charged you, please contact support — do not pay again."
+          );
+          return;
+        }
+
+        const { data, error } = await supabase.rpc('get_payment_status', { transaction_id: id });
+        if (error) {
+          console.error('Polling error:', error);
+          return; // transient — keep polling
+        }
+
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row) return;
+
+        if (row.status === 'success') {
+          if (row.order_id) {
+            finishSuccess(row.order_id);
+          } else {
+            // Paid; the order is being created (the server retries automatically)
+            setReceipt(row.mpesa_receipt ?? null);
+            setStatus('submitting');
+          }
+        } else if (row.status === 'failed' || row.status === 'expired') {
+          fail(friendlyFailure(row.failure_reason));
+        } else if (row.status === 'needs_review') {
+          stopPolling();
+          localStorage.removeItem(PENDING_KEY);
+          setReceipt(row.mpesa_receipt ?? null);
+          setStatus('review');
+        } else if (elapsed > DELAYED_AFTER_MS) {
+          setStatus((prev) => (prev === 'waiting' ? 'delayed' : prev));
+        }
+      } finally {
+        inFlightRef.current = false;
+      }
+    };
+
+    tick();
+    pollRef.current = window.setInterval(tick, POLL_INTERVAL_MS);
+  };
+
+  const handlePay = async () => {
+    if (payLockRef.current) return; // guards double taps
+    if (!phone) {
+      setErrorMessage('Missing phone number — please go back to checkout.');
+      setStatus('failed');
+      return;
+    }
+
+    payLockRef.current = true;
+    setStatus('initiating');
+    setErrorMessage('');
+
+    // The server prices the cart from the database. We send WHAT is being bought,
+    // never how much it costs.
+    const { data, error } = await supabase.functions.invoke('initiate-mpesa-payment', {
+      body: {
+        phone,
+        items: items.map((i) => ({
+          product_id: i.product.id,
+          quantity: i.quantity,
+          size: i.variantSize ?? null,
+        })),
+        location_id: checkout.locationId ?? null,
+        delivery_lat: checkout.deliveryLat ?? null,
+        delivery_lng: checkout.deliveryLng ?? null,
+        delivery_address: checkout.deliveryAddress ?? null,
+        location_description: checkout.description ?? null,
+        customer_id: checkout.customerId ?? null,
+      },
+    });
+
+    if (error || !data?.id) {
+      const message = (await readFunctionError(error)) ?? data?.error ?? null;
+      fail(message || 'Failed to start payment. Please try again.');
+      return;
+    }
+
+    const serverAmount = Number(data.amount) || estimatedTotal;
+    const startedAt = Date.now();
+    setAmount(serverAmount);
+    localStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify({ id: data.id, startedAt, amount: serverAmount })
+    );
+    setStatus('waiting');
+    startPolling(data.id, startedAt);
+  };
+
+  // ── Manual Till-code path (temporary; closed once live STK prompting is on) ──
+  const finalizeManualOrder = async (code: string) => {
     setStatus('submitting');
     try {
       const order = await createOrder({
         phone_number: checkout.phone,
         location_id: checkout.locationId ?? null,
         location_description: checkout.description,
-        transaction_code: mpesaReceipt.toUpperCase(),
+        transaction_code: code.toUpperCase(),
         customer_id: checkout.customerId ?? null,
         delivery_lat: checkout.deliveryLat ?? null,
         delivery_lng: checkout.deliveryLng ?? null,
@@ -56,6 +246,7 @@ const PaymentPage = () => {
         items: items.map((i) => ({
           product_id: i.product.id,
           quantity: i.quantity,
+          size: i.variantSize ?? null,
           variant_price: i.variantPrice ?? null,
         })),
       });
@@ -64,73 +255,14 @@ const PaymentPage = () => {
       sessionStorage.removeItem('checkout');
       clearCart();
       navigate('/order-confirmation');
-    } catch (error) {
-      console.error('Order submission failed after successful payment:', error);
-      // Payment succeeded but order save failed — this needs a support path,
-      // not a generic retry, since re-paying would double-charge the customer.
+    } catch (err) {
+      console.error('Manual order submission failed:', err);
+      payLockRef.current = false;
       setStatus('failed');
       setErrorMessage(
-        `Your payment went through (receipt ${mpesaReceipt}) but we couldn't save your order. Please contact support with this receipt number.`
+        'We could not save your order with that code. Check the code and try again, or contact support.'
       );
     }
-  };
-
-  const startPolling = (id: string) => {
-    clearTimers();
-
-    pollRef.current = window.setInterval(async () => {
-      const { data, error } = await supabase.rpc('get_payment_status', {
-        transaction_id: id,
-      });
-
-      if (error) {
-        console.error('Polling error:', error);
-        return; // transient — keep polling until timeout
-      }
-
-      const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return;
-
-      if (row.status === 'success') {
-        clearTimers();
-        finalizeOrder(row.mpesa_receipt);
-      } else if (row.status === 'failed') {
-        clearTimers();
-        setStatus('failed');
-        setErrorMessage(row.failure_reason || 'Payment was not completed.');
-      }
-    }, POLL_INTERVAL_MS);
-
-    timeoutRef.current = window.setTimeout(() => {
-      clearTimers();
-      setStatus('failed');
-      setErrorMessage("We didn't receive a response in time. Please try again.");
-    }, TIMEOUT_MS);
-  };
-
-  const handlePay = async () => {
-    if (!phone) {
-      setErrorMessage('Missing phone number — please go back to checkout.');
-      setStatus('failed');
-      return;
-    }
-
-    setStatus('initiating');
-    setErrorMessage('');
-
-    const { data, error } = await supabase.functions.invoke('initiate-mpesa-payment', {
-      body: { phone, amount: total },
-    });
-
-    if (error || !data?.id) {
-      setStatus('failed');
-      setErrorMessage(data?.error || 'Failed to start payment. Please try again.');
-      return;
-    }
-
-    setTxId(data.id);
-    setStatus('waiting');
-    startPolling(data.id);
   };
 
   const handleCopyTill = async () => {
@@ -146,18 +278,25 @@ const PaymentPage = () => {
   const manualCodeValid = /^[A-Z0-9]{10}$/.test(manualCode);
 
   const handleManualConfirm = () => {
-    if (!manualCodeValid) return;
-    finalizeOrder(manualCode);
+    if (!manualCodeValid || payLockRef.current) return;
+    payLockRef.current = true;
+    finalizeManualOrder(manualCode);
   };
 
   const handleRetry = () => {
-    clearTimers();
-    setTxId(null);
+    stopPolling();
+    localStorage.removeItem(PENDING_KEY);
+    payLockRef.current = false;
     setErrorMessage('');
+    setReceipt(null);
     setStatus('idle');
   };
 
-  const isBusy = status === 'initiating' || status === 'waiting' || status === 'submitting';
+  const isBusy =
+    status === 'initiating' ||
+    status === 'waiting' ||
+    status === 'delayed' ||
+    status === 'submitting';
 
   return (
     <div className="min-h-screen bg-background">
@@ -183,9 +322,7 @@ const PaymentPage = () => {
 
           <div className="bg-secondary rounded-lg p-4 text-center">
             <p className="text-sm text-muted-foreground">Amount to Pay</p>
-            <p className="text-2xl font-bold text-foreground">
-              KSh {total.toLocaleString()}
-            </p>
+            <p className="text-2xl font-bold text-foreground">KSh {amount.toLocaleString()}</p>
           </div>
 
           {phone && (
@@ -201,12 +338,12 @@ const PaymentPage = () => {
               onClick={handlePay}
               className="w-full py-3 rounded-lg gold-gradient text-primary-foreground font-medium hover:opacity-90 transition-opacity"
             >
-              Pay KSh {total.toLocaleString()}
+              Pay KSh {amount.toLocaleString()}
             </button>
           )}
 
           {/* Manual payment option */}
-          {status === 'idle' && (
+          {status === 'idle' && MANUAL_ENABLED && (
             <div className="space-y-3">
               {!showManual ? (
                 <button
@@ -218,7 +355,7 @@ const PaymentPage = () => {
               ) : (
                 <div className="bg-secondary rounded-lg p-4 space-y-3">
                   <p className="text-sm text-muted-foreground text-center">
-                    Pay KSh {total.toLocaleString()} to Till
+                    Pay KSh {amount.toLocaleString()} to Till
                   </p>
                   <div className="flex items-center justify-center gap-2">
                     <span className="text-xl font-bold tracking-widest text-foreground">
@@ -271,11 +408,40 @@ const PaymentPage = () => {
             </div>
           )}
 
-          {/* Finalizing the order after payment confirmed */}
+          {/* Taking longer than usual — keep checking, tell the customer not to pay again */}
+          {status === 'delayed' && (
+            <div className="text-center space-y-3 py-2">
+              <Loader2 className="w-8 h-8 mx-auto animate-spin text-primary" />
+              <p className="text-foreground font-medium">Still waiting for M-Pesa…</p>
+              <p className="text-sm text-muted-foreground">
+                If you have entered your PIN, hang tight: your order will appear automatically.
+                Please don&apos;t pay again.
+              </p>
+            </div>
+          )}
+
+          {/* Payment confirmed; order being created */}
           {status === 'submitting' && (
-            <div className="flex items-center justify-center gap-2 py-3 text-muted-foreground text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Payment received — saving your order…
+            <div className="text-center space-y-2 py-3">
+              <div className="flex items-center justify-center gap-2 text-muted-foreground text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Payment received — saving your order…
+              </div>
+              {receipt && (
+                <p className="text-xs text-muted-foreground">Receipt: {receipt}</p>
+              )}
+            </div>
+          )}
+
+          {/* Paid, but something needs a human (e.g. amount mismatch) */}
+          {status === 'review' && (
+            <div className="text-center space-y-3 py-2">
+              <AlertTriangle className="w-8 h-8 mx-auto text-primary" />
+              <p className="text-foreground font-medium">We received your payment</p>
+              <p className="text-sm text-muted-foreground">
+                We need to verify it before confirming your order. Please contact support
+                {receipt ? ` with receipt ${receipt}` : ''} — do not pay again.
+              </p>
             </div>
           )}
 

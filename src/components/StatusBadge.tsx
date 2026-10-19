@@ -6,11 +6,12 @@ const statusConfig: Record<OrderStatus, { label: string; className: string }> = 
   processing: { label: 'Processing', className: 'bg-blue-500/20 text-blue-400' },
   out_for_delivery: { label: 'Out for Delivery', className: 'bg-purple-500/20 text-purple-400' },
   delivered: { label: 'Delivered', className: 'bg-success/20 text-success' },
+  completed: { label: 'Completed', className: 'bg-success/20 text-success' },
   rejected: { label: 'Rejected', className: 'bg-destructive/20 text-destructive' },
 };
 
 const StatusBadge = ({ status }: { status: OrderStatus }) => {
-  const config = statusConfig[status];
+  const config = statusConfig[status] ?? { label: String(status), className: 'bg-secondary text-muted-foreground' };
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${config.className}`}>
       {config.label}

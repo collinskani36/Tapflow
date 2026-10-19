@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Package, Clock, CheckCircle, XCircle, Truck, Star } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { getCustomerOrders } from '@/lib/customerApi';
 import { useCustomer } from '@/context/CustomerContext';
 import { Order } from '@/types';
 import OrderDetailModal from '@/components/OrderDetailModal';
@@ -24,17 +24,9 @@ const CustomerOrderHistory = () => {
   useEffect(() => {
     if (!customer) return;
     const load = async () => {
-      const { data } = await supabase
-        .from('orders')
-        .select(`
-          id, created_at, status, total_amount, transaction_code, rating,
-          delivery_locations ( name ),
-          order_items ( id, quantity, price_at_time, products ( name ) )
-        `)
-        .eq('customer_id', customer.id)
-        .order('created_at', { ascending: false });
+      const data = await getCustomerOrders(customer.id).catch(() => [] as Order[]);
 
-      setOrders((data as unknown as Order[]) || []);
+      setOrders(data);
       setLoading(false);
     };
     load();

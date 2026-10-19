@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Bike, Phone, Star, PackageCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import OrderTracker from '@/components/OrderTracker';
-import { supabase } from '@/lib/supabase';
+import { getOrderTracking, markOrderReceived, rateOrder } from '@/lib/customerApi';
 import { Order } from '@/types';
 
 type OrderDetail = Order;
@@ -64,22 +64,17 @@ const OrderDetailModal = ({ orderId, open, onClose }: Props) => {
     setLoading(true);
 
     const load = async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`
-          id, phone_number, transaction_code, total_amount, status, created_at,
-          is_received, rating,
-          delivery_locations ( name ),
-          order_items ( id, quantity, price_at_time, products ( name ) ),
-          riders ( id, name, phone )
-        `)
-        .eq('id', orderId)
-        .single();
+      let data: OrderDetail | null = null;
+      try {
+        data = (await getOrderTracking(orderId)) as unknown as OrderDetail | null;
+      } catch (err) {
+        console.error(err);
+      }
 
       if (cancelled) return;
 
-      if (!error && data) {
-        setOrder(data as unknown as OrderDetail);
+      if (data) {
+        setOrder(data);
         if (data.rating) {
           setRating(data.rating);
           setRatingDone(true);
@@ -100,13 +95,11 @@ const OrderDetailModal = ({ orderId, open, onClose }: Props) => {
   const handleReceived = async () => {
     if (!order?.id) return;
     setSubmitting(true);
-    const { error } = await supabase
-      .from('orders')
-      .update({ is_received: true, status: 'completed' })
-      .eq('id', order.id);
-
-    if (!error) {
+    try {
+      await markOrderReceived(order.id);
       setOrder((prev) => (prev ? { ...prev, is_received: true, status: 'completed' } : prev));
+    } catch (err) {
+      console.error(err);
     }
     setSubmitting(false);
   };
@@ -114,13 +107,16 @@ const OrderDetailModal = ({ orderId, open, onClose }: Props) => {
   const handleSubmitRating = async () => {
     if (!order?.id || rating === 0) return;
     setSubmitting(true);
-    const { error } = await supabase.from('orders').update({ rating }).eq('id', order.id);
-    if (!error) {
+    try {
+      await rateOrder(order.id, rating);
       setOrder((prev) => (prev ? { ...prev, rating } : prev));
       setRatingDone(true);
+    } catch (err) {
+      console.error(err);
     }
     setSubmitting(false);
   };
+
 
   const itemsSubtotal = order
     ? (order.order_items ?? []).reduce((sum, item) => sum + item.price_at_time * item.quantity, 0)

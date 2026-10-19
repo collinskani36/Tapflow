@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { CheckCircle, Bike, Phone, Star, PackageCheck, Wine } from 'lucide-react';
 import Header from '@/components/Header';
 import OrderTracker from '@/components/OrderTracker';
-import { supabase } from '@/lib/supabase';
+import { getOrderTracking, markOrderReceived, rateOrder } from '@/lib/customerApi';
 import { Order } from '@/types';
 
 type OrderWithRider = Order;
@@ -78,18 +78,13 @@ const OrderConfirmationPage = () => {
       const orderId = parsed.id;
       if (!orderId) { setLoading(false); return; }
 
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`
-          *,
-          order_items (*, products (*)),
-          delivery_locations (*),
-          riders (id, name, phone)
-        `)
-        .eq('id', orderId)
-        .single();
-
-      if (error) { console.error(error); setLoading(false); return; }
+      let data: OrderWithRider | null = null;
+      try {
+        data = await getOrderTracking(orderId);
+      } catch (error) {
+        console.error(error);
+      }
+      if (!data) { setLoading(false); return; }
 
       setOrder(data);
       if (data.rating) {
@@ -102,61 +97,38 @@ const OrderConfirmationPage = () => {
     loadOrder();
   }, []);
 
-  // Real-time listener
+  // Live updates: customers can't subscribe to the orders table directly, so
+  // poll the tracking function while the order is still in progress.
   useEffect(() => {
     if (!order?.id) return;
+    if (order.status === 'completed' || order.status === 'rejected') return;
 
-    const channel = supabase
-      .channel('order-live-tracking')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'orders',
-          filter: `id=eq.${order.id}`,
-        },
-        async (payload) => {
-          const newRiderId = payload.new?.rider_id;
-          const prevRiderId = order.riders?.id;
+    const id = order.id;
+    const timer = window.setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const fresh = await getOrderTracking(id);
+        if (fresh) setOrder(fresh);
+      } catch {
+        /* transient, try again on the next tick */
+      }
+    }, 8000);
 
-          if (newRiderId && newRiderId !== prevRiderId) {
-            const { data } = await supabase
-              .from('orders')
-              .select(`
-                *,
-                order_items (*, products (*)),
-                delivery_locations (*),
-                riders (id, name, phone)
-              `)
-              .eq('id', order.id)
-              .single();
-
-            if (data) setOrder(data);
-          } else {
-            setOrder((prev) => prev ? { ...prev, ...payload.new } : prev);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [order?.id, order?.riders?.id]);
+    return () => window.clearInterval(timer);
+  }, [order?.id, order?.status]);
 
   // Mark as received
   const handleReceived = async () => {
     if (!order?.id) return;
     setSubmitting(true);
 
-    const { error } = await supabase
-      .from('orders')
-      .update({ is_received: true, status: 'completed' })
-      .eq('id', order.id);
-
-    if (!error) {
+    try {
+      await markOrderReceived(order.id);
       setOrder((prev) =>
         prev ? { ...prev, is_received: true, status: 'completed' } : prev
       );
+    } catch (error) {
+      console.error(error);
     }
     setSubmitting(false);
   };
@@ -166,17 +138,16 @@ const OrderConfirmationPage = () => {
     if (!order?.id || rating === 0) return;
     setSubmitting(true);
 
-    const { error } = await supabase
-      .from('orders')
-      .update({ rating })
-      .eq('id', order.id);
-
-    if (!error) {
+    try {
+      await rateOrder(order.id, rating);
       setOrder((prev) => prev ? { ...prev, rating } : prev);
       setRatingDone(true);
+    } catch (error) {
+      console.error(error);
     }
     setSubmitting(false);
   };
+
 
   // Loading
   if (loading) {

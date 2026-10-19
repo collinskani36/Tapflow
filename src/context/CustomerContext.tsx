@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { customerSignIn, customerSignUp, getCustomerProfile } from '@/lib/customerApi';
 
 export interface CustomerProfile {
   id: string;
@@ -30,11 +30,7 @@ export const CustomerProvider = ({ children }: { children: ReactNode }) => {
       const savedId = localStorage.getItem(STORAGE_KEY);
       if (!savedId) { setLoading(false); return; }
 
-      const { data } = await supabase
-        .from('customer_profiles')
-        .select('*')
-        .eq('id', savedId)
-        .single();
+      const data = await getCustomerProfile(savedId).catch(() => null);
 
       if (data) setCustomer(data);
       else localStorage.removeItem(STORAGE_KEY); // stale id
@@ -45,14 +41,14 @@ export const CustomerProvider = ({ children }: { children: ReactNode }) => {
 
   // Sign in by email OR username
   const signIn = async (identifier: string): Promise<{ error: string | null }> => {
-    const val = identifier.trim().toLowerCase();
-    const { data, error } = await supabase
-      .from('customer_profiles')
-      .select('*')
-      .or(`email.eq.${val},username.eq.${val}`)
-      .single();
+    let data: CustomerProfile | null = null;
+    try {
+      data = await customerSignIn(identifier);
+    } catch {
+      return { error: 'Could not sign in right now. Check your connection and try again.' };
+    }
 
-    if (error || !data) return { error: 'No account found. Check your email or username.' };
+    if (!data) return { error: 'No account found. Check your email or username.' };
 
     localStorage.setItem(STORAGE_KEY, data.id);
     setCustomer(data);
@@ -61,28 +57,25 @@ export const CustomerProvider = ({ children }: { children: ReactNode }) => {
 
   // Create a new profile
   const signUp = async (username: string, email: string): Promise<{ error: string | null }> => {
-    const cleanUsername = username.trim().toLowerCase();
-    const cleanEmail = email.trim().toLowerCase();
-
-    // Check for duplicates
-    const { data: existing } = await supabase
-      .from('customer_profiles')
-      .select('id, email, username')
-      .or(`email.eq.${cleanEmail},username.eq.${cleanUsername}`)
-      .maybeSingle();
-
-    if (existing) {
-      if (existing.email === cleanEmail) return { error: 'That email is already registered. Try signing in.' };
-      if (existing.username === cleanUsername) return { error: 'That username is taken. Try another.' };
+    let result: Awaited<ReturnType<typeof customerSignUp>>;
+    try {
+      result = await customerSignUp(username, email);
+    } catch {
+      return { error: 'Could not create account. Try again.' };
     }
 
-    const { data, error } = await supabase
-      .from('customer_profiles')
-      .insert({ username: cleanUsername, email: cleanEmail })
-      .select()
-      .single();
+    if (result.error) {
+      const messages: Record<string, string> = {
+        invalid_username: 'Username must be 2 to 40 characters.',
+        invalid_email: 'Enter a valid email address.',
+        email_taken: 'That email is already registered. Try signing in.',
+        username_taken: 'That username is taken. Try another.',
+      };
+      return { error: messages[result.error] ?? 'Could not create account. Try again.' };
+    }
 
-    if (error || !data) return { error: 'Could not create account. Try again.' };
+    const data = result.profile;
+    if (!data) return { error: 'Could not create account. Try again.' };
 
     localStorage.setItem(STORAGE_KEY, data.id);
     setCustomer(data);

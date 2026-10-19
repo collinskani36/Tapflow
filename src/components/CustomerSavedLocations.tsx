@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MapPin, Plus, Trash2, Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { getSavedLocations, addSavedLocation, deleteSavedLocation } from '@/lib/customerApi';
 import { useCustomer } from '@/context/CustomerContext';
 import { DeliveryLocation } from '@/types';
 import { fetchLocations } from '@/lib/supabase';
@@ -32,12 +32,8 @@ const CustomerSavedLocations = () => {
   useEffect(() => {
     if (!customer) return;
     const load = async () => {
-      const [{ data: savedData }, locData] = await Promise.all([
-        supabase
-          .from('customer_saved_locations')
-          .select('id, label, location_id, location_description, delivery_lat, delivery_lng, delivery_address, delivery_locations ( name, delivery_fee )')
-          .eq('customer_id', customer.id)
-          .order('created_at', { ascending: false }),
+      const [savedData, locData] = await Promise.all([
+        getSavedLocations(customer.id).catch(() => []),
         fetchLocations(),
       ]);
       setSaved((savedData as unknown as SavedLocation[]) || []);
@@ -51,19 +47,21 @@ const CustomerSavedLocations = () => {
     if (!customer || !locationId) return;
     setSaving(true);
 
-    const { data, error } = await supabase
-      .from('customer_saved_locations')
-      .insert({
-        customer_id: customer.id,
+    let added: SavedLocation | null = null;
+    try {
+      added = (await addSavedLocation({
+        customerId: customer.id,
         label: label.trim() || null,
-        location_id: locationId,
-        location_description: description.trim() || null,
-      })
-      .select('id, label, location_id, location_description, delivery_locations ( name, delivery_fee )')
-      .single();
+        locationId,
+        description: description.trim() || null,
+      })) as unknown as SavedLocation;
+    } catch (err) {
+      console.error(err);
+    }
 
-    if (!error && data) {
-      setSaved((prev) => [data as unknown as SavedLocation, ...prev]);
+    if (added) {
+      const row = added;
+      setSaved((prev) => [row, ...prev]);
       setLabel(''); setLocationId(''); setDescription('');
       setAdding(false);
     }
@@ -71,7 +69,13 @@ const CustomerSavedLocations = () => {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('customer_saved_locations').delete().eq('id', id);
+    if (!customer) return;
+    try {
+      await deleteSavedLocation(customer.id, id);
+    } catch (err) {
+      console.error(err);
+      return;
+    }
     setSaved((prev) => prev.filter((s) => s.id !== id));
   };
 

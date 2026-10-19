@@ -8,6 +8,7 @@ import { useCart } from '@/context/CartContext';
 import { useCustomer } from '@/context/CustomerContext';
 import { DeliveryLocation } from '@/types';
 import { fetchLocations, supabase } from '@/lib/supabase';
+import { getSavedLocations, addSavedLocation } from '@/lib/customerApi';
 
 interface PinLocation {
   lat: number;
@@ -85,16 +86,11 @@ const CheckoutPage = () => {
       return;
     }
     const loadSaved = async () => {
-      const { data, error } = await supabase
-        .from('customer_saved_locations')
-        .select(
-          'id, label, location_id, location_description, delivery_lat, delivery_lng, delivery_address, delivery_locations ( name, delivery_fee )'
-        )
-        .eq('customer_id', customer.id)
-        .order('created_at', { ascending: false });
-
-      if (!error && data) {
+      try {
+        const data = await getSavedLocations(customer.id);
         setSavedLocations(data as unknown as SavedLocation[]);
+      } catch (err) {
+        console.error(err);
       }
     };
     loadSaved();
@@ -165,24 +161,24 @@ const CheckoutPage = () => {
     if (!customer || !pinLocation) return;
     setSaving(true);
 
-    const { data, error } = await supabase
-      .from('customer_saved_locations')
-      .insert({
-        customer_id: customer.id,
+    let added: SavedLocation | null = null;
+    try {
+      added = (await addSavedLocation({
+        customerId: customer.id,
         label: saveLabel.trim() || null,
-        location_id: null,
-        location_description: description.trim() || null,
-        delivery_lat: pinLocation.lat,
-        delivery_lng: pinLocation.lng,
-        delivery_address: pinLocation.address,
-      })
-      .select(
-        'id, label, location_id, location_description, delivery_lat, delivery_lng, delivery_address, delivery_locations ( name, delivery_fee )'
-      )
-      .single();
+        locationId: null,
+        description: description.trim() || null,
+        lat: pinLocation.lat,
+        lng: pinLocation.lng,
+        address: pinLocation.address,
+      })) as unknown as SavedLocation;
+    } catch (err) {
+      console.error(err);
+    }
 
-    if (!error && data) {
-      setSavedLocations((prev) => [data as unknown as SavedLocation, ...prev]);
+    if (added) {
+      const row = added;
+      setSavedLocations((prev) => [row, ...prev]);
       setSaveDone(true);
       setShowSavePrompt(false);
       setSaveLabel('');
